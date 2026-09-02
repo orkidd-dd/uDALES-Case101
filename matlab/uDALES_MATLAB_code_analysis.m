@@ -73,9 +73,9 @@ xlabel('x(m)')
 ylabel('y(m)')
 ======================================================================================================
 % u at one fixed time
-ut_fix = u(:,:,:,n);
+curut = u(:,:,:,n);
 % solid locations 
-ut_fix(sim.Su) = NaN;
+curut(sim.Su) = NaN;
 u_slice = squeeze(curut(:,:,k))';
 figure
 
