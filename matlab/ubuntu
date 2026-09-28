@@ -1,1 +1,4 @@
-
+pwd
+cd /mnt/h/udales_data/u-dales-output/101  
+% Run   the    simulation   on    Ubuntu    using    the   following    command:   time ./tools/local_execute.sh
+time ./tools/local_execute.sh ~/u-dales-run/101
