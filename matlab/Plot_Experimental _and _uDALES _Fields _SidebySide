@@ -1,0 +1,214 @@
+clc
+
+% Load simulation
+
+sim = udbase(101,'H:\udales_data\u-dales-output\101');
+
+% Load data
+
+TKE  = sim.load_stat_t('tketc');
+xt   = sim.load_stat_t('xt');
+zt   = sim.load_stat_t('zt');
+uxyt = sim.load_stat_xyt('uxyt');
+
+% Reference height
+
+H = 16;
+
+% Choose time interval
+
+n = 5;
+
+% Normalize coordinates
+
+x_norm = xt/H;
+z_norm = zt/H;
+
+% TKE at selected time
+
+TKE_xyz = TKE(:,:,:,n);
+
+% Average TKE over y direction
+
+TKE_xz = squeeze(mean(TKE_xyz,2));
+
+% Select street canyon: x = 24-40 m
+
+L = xt >= 24 & xt <= 40;
+
+TKE_canyon = TKE_xz(L,:);
+
+x_canyon = xt(L);
+
+% Keep original x/H coordinate
+
+x_norm_canyon = x_canyon/H;
+
+% Select height: z = 0-H
+
+Z = zt <= 1.4*H;
+
+TKE_plot = TKE_canyon(:,Z);
+
+z_plot = zt(Z)/H;
+
+% Reference velocity
+
+u_ref = 0.14
+
+% Normalize TKE
+
+TKE_norm = TKE_plot/u_ref^2;
+
+% Plot
+
+figure
+
+contourf(x_norm_canyon,z_plot,TKE_norm')
+
+set(gca,'YDir','normal')
+
+% Axis limits
+
+xlim([1.5 2.5])
+ylim([0 max(z_plot)])
+
+% Labels
+
+% Labels and title (with larger font size)
+xlabel('x/H', 'FontSize', 14, 'FontWeight', 'bold');
+ylabel('z/H', 'FontSize', 14, 'FontWeight', 'bold');
+title('TKE', 'FontSize', 18, 'FontWeight', 'bold');
+
+% Colour range
+
+clim([0 0.05])
+
+% Colorbar
+
+cb = colorbar;
+cb.Label.String = 'TKE/u_*^2';
+cb.Label.FontSize = 14;
+cb.Label.Rotation = 360;
+clim([0 max(TKE_norm(:))])
+%%
+% Load experimental data via CSV
+clear;
+clc;
+close all;
+
+% 1. Define Paths and Simulation Parameters
+udales_folder = 'H:\udales_data\u-dales-output\101';
+exp_file      = 'expdata_tke.csv';
+
+H        = 16;     % Building height in meters
+x_center = 32;     % Street canyon center in meters (x = 24m to 40m)
+u_ref    = 0.14;   % Friction velocity u_* = 0.14 m/s
+
+% 2. Load uDALES Simulation Data
+sim = udbase(101, udales_folder);
+
+% Load 4D TKE statistical field (x, y, z, time)
+TKE        = sim.load_stat_t('tketc');
+time_tdump = sim.load_stat_t('time');
+
+% Load grid coordinates
+xt = sim.load_stat_t('xt'); % Grid center x-coordinates
+zt = sim.load_stat_t('zt'); % Grid center z-coordinates
+
+% 3. Temporal and Spatial Averaging for uDALES Data
+% Average over the spanwise direction (y-axis)
+TKE_xz_t = squeeze(mean(TKE, 2, 'omitnan')); % Dimensions: x x z x time
+
+% Select time averaging window (e.g., t = 200s to 1500s)
+idx_time = time_tdump >= 200 & time_tdump <= 1500;
+
+% Compute time-averaged 2D TKE field (x x z)
+TKE_mean = mean(TKE_xz_t(:, :, idx_time), 3, 'omitnan');
+
+% 4. Select Street Canyon Domain and Normalize Coordinates
+% Filter domain: x from 24m to 40m (H/W = 1 canyon), z up to 1.3*H
+x_mask = xt >= 24 & xt <= 40;
+z_mask = zt >= 0 & zt <= 1.3 * H;
+
+x_sim = xt(x_mask);
+z_sim = zt(z_mask);
+TKE_canyon = TKE_mean(x_mask, z_mask);
+
+% Normalize TKE by friction velocity u_*^2
+TKE_sim_norm = TKE_canyon / u_ref^2;
+
+% Shift x-coordinate so that the canyon center is at x/H = 0 (range: -0.5 to 0.5)
+x_sim_norm = (x_sim - x_center) / H;
+z_sim_norm = z_sim / H;
+
+% 5. Load and Process Experimental TKE CSV Data
+% Skip the first 2 metadata lines ('Cells' and header description)
+T_exp = readtable(exp_file, 'HeaderLines', 2);
+
+% Extract up to 2500 grid points using column indices
+% Column 7: x centre (-0.5 to 0.5), Column 8: y centre (z/H: 0 to 1.4), Column 11: TKE value
+x_exp_raw   = T_exp{1:2500, 7}; 
+z_exp_raw   = T_exp{1:2500, 8}; 
+tke_exp_raw = T_exp{1:2500, 11};
+
+% Filter out NaN or non-finite missing data entries
+valid_exp = isfinite(x_exp_raw) & isfinite(z_exp_raw) & isfinite(tke_exp_raw);
+x_exp   = x_exp_raw(valid_exp);
+z_exp   = z_exp_raw(valid_exp);
+tke_exp = tke_exp_raw(valid_exp);
+
+% 6. Interpolate Experimental Data onto a Uniform Grid
+% Define uniform target grid matching normalized domain
+xq = linspace(-0.5, 0.5, 100);
+zq = linspace(0, 1.3, 100);
+[X_exp_grid, Z_exp_grid] = meshgrid(xq, zq);
+
+% Natural neighbor interpolation to eliminate hole artifacts
+TKE_exp_interp = griddata(x_exp, z_exp, tke_exp, X_exp_grid, Z_exp_grid, 'natural');
+
+% 7. Plot Experimental and uDALES Fields Side-by-Side
+figure('Color', 'w', 'Position', [100, 100, 1200, 500]);
+tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+% --- Subplot 1: Experimental TKE ---
+nexttile;
+contourf(X_exp_grid, Z_exp_grid, TKE_exp_interp, 30, 'LineColor', 'none');
+set(gca, 'YDir', 'normal', 'FontSize', 13);
+xlim([-0.5, 0.5]);
+ylim([0, 1.3]);
+clim([0, 2]); % Range matching experimental scale
+axis equal tight;
+title('Experiment', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('$x/H$', 'Interpreter', 'latex', 'FontSize', 14);
+ylabel('$z/H$', 'Interpreter', 'latex', 'FontSize', 14);
+
+% --- Subplot 2: uDALES Simulation TKE ---
+% 
+% Add uDALES 2D grid interpolation after Section 4:
+[X_sim_mesh, Z_sim_mesh] = meshgrid(x_sim_norm, z_sim_norm);
+TKE_sim_interp = interp2(X_sim_mesh, Z_sim_mesh, TKE_sim_norm', X_exp_grid, Z_exp_grid, 'linear');
+
+% --- Subplot 2: Plot uDALES simulation TKE using interpolated data ---
+nexttile;
+contourf(X_exp_grid, Z_exp_grid, TKE_sim_interp, 30, 'LineColor', 'none');
+set(gca, 'YDir', 'normal', 'FontSize', 13, 'XTick', -0.5:0.25:0.5);
+xlim([-0.5, 0.5]);
+ylim([0, 1.3]);
+clim([0, max(TKE_sim_norm(:))]);
+axis equal tight;
+title('uDALES', 'FontSize', 12, 'FontWeight', 'bold');
+xlabel('$x/H$', 'Interpreter', 'latex', 'FontSize', 14);
+ylabel('$z/H$', 'Interpreter', 'latex', 'FontSize', 14);
+
+% --- Shared Color Map and Color Bar ---
+colormap(turbo);
+cb = colorbar;
+cb.Layout.Tile = 'east';
+cb.Label.String = '$TKE / u_*^2$';
+cb.Label.Interpreter = 'latex';
+cb.Label.FontSize = 14;
+cb.Label.Rotation = 90;
+
+% Super Title
+sgtitle('TKE Comparison: Experiment vs. uDALES', 'FontSize', 18, 'FontWeight', 'bold');
