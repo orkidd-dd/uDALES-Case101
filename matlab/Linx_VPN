@@ -1,1 +1,37 @@
+cd ~/u-dales-run/101
+nano namoptions.101
+cp ~/u-dales-run/101/namoptions.101 $SCRATCH_FLASH/u-dales-run/101/ 
+diff -q ~/u-dales-run/101/namoptions.101 $SCRATCH_FLASH/u-dales-run/101/namoptions.101  % check differents
 
+cd ~/u-dales-run/101
+nano run_101.slurm
+===========================================================================================================
+#!/bin/bash
+#SBATCH --job-name=udales101
+#SBATCH --partition=cpu_sapphire
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=1
+#SBATCH --threads-per-core=1
+#SBATCH --mem=32G
+#SBATCH --time=24:00:00
+#SBATCH --output=udales101_%j.out
+#SBATCH --error=udales101_%j.err
+
+module load spack/v0.23
+module load gcc/12.4.0
+module load openmpi/5.0.7_gcc12
+module load cmake/3.26
+module load fftw/3.3.10
+spack load netcdf-fortran@4.6.1
+
+export OMP_NUM_THREADS=1
+export HWLOC_LIBXML=0
+
+cd $SCRATCH_FLASH/u-dales-run/101
+
+mpirun --bind-to none --map-by slot -np 4 /home/jili/u-dales/build/release/u-dales namoptions.101
+============================================================================================================
+sbatch run_101.slurm %run
+squeue -j 1975002 % check process
