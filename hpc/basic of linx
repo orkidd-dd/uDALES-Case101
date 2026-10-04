@@ -1,0 +1,94 @@
+# Linux Basic Commands
+
+## Navigation
+
+pwd                         % print working directory
+ls                          % list files
+ls -l                       % list files in detail
+ls -la                      % list all files in detail
+
+cd folder                   % change directory
+cd ..                       % go to parent directory
+cd ~                        % go to home directory
+cd -                        % go to previous directory
+
+
+## Files and folders
+
+mkdir folder                % make directory
+mkdir -p folder/subfolder   % create directories
+
+touch file                  % create an empty file
+
+cp source destination       % copy file
+cp -r folder1 folder2       % copy directory
+
+mv oldname newname          % move or rename
+rm file                     % remove file
+rm -r folder                % remove directory
+
+
+## View files
+
+cat file                    % display file
+less file                   % view file page by page
+head file                   % show first lines
+tail file                   % show last lines
+tail -f file                % follow file in real time
+
+
+## Edit files
+
+nano file                   % edit file
+
+
+## Search
+
+find . -name "filename"     % find file
+grep "text" filename        % search text
+
+
+## System
+
+whoami                      % show current user
+hostname                    % show computer/server name
+df -h                       % show disk space
+du -sh folder               % show folder size
+ps                          % show running processes
+top                         % monitor system processes
+
+
+## Permissions
+
+chmod +x file               % make file executable
+
+
+## SSH
+
+ssh username@server         % connect to remote server
+exit                        % disconnect
+
+
+## Git
+
+git status                  % check Git status
+git pull                    % download latest changes
+git add .                   % stage all changes
+git commit -m "message"     % save changes
+git push                    % upload changes
+
+
+## Slurm / HPC
+
+sbatch run_101.slurm        % submit job
+squeue -u $USER             % check jobs
+scancel JOBID               % cancel job
+scontrol show job JOBID     % show job details
+sacct                       % show job history
+sacct -j JOBID              % show specific job
+
+
+## uDALES
+
+ncdump -h xytdump.101.nc    % show NetCDF header
+ncdump -h tdump.101.nc      % show NetCDF header
