@@ -57,3 +57,4 @@ echo "============================================================"
 sbatch run_101.slurm %run
 squeue -j （1977745）
 squeue -j 1975002 % check process
+ls -lh $SCRATCH_FLASH/output/101_3600s
