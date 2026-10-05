@@ -6,3 +6,4 @@ which ncpdq
 which ncrcat
 which ncks
 /home/jili/u-dales/tools/gather_outputs.sh $SCRATCH_FLASH/output/101
+scp "jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/101/tdump.101.nc" "H:\udales_data\u-dales-output\101\"
