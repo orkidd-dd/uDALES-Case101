@@ -1,0 +1,8 @@
+rm -rf $SCRATCH_FLASH/output/101_2000s
+mv $SCRATCH_FLASH/output/101_3600s $SCRATCH_FLASH/output/101  % 
+module load spack/v0.23
+spack load nco@5.2.4
+which ncpdq
+which ncrcat
+which ncks
+/home/jili/u-dales/tools/gather_outputs.sh $SCRATCH_FLASH/output/101
