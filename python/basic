@@ -1,0 +1,12 @@
+import numpy as np % calcualate
+import matplotlib.pyplot as plt %plot
+import pandas as pd  %read file
+z = np.array([0, 1, 2, 3, 4])
+u = np.array([0, 1.2, 1.5, 1.8, 2.0])
+plt.plot(u, z)
+plt.xlabel("Velocity (m/s)")
+plt.ylabel("z (m)")
+plt.show()
+%% read file from CSV
+import pandas as pd
+data = pd.read_csv("data.csv")
