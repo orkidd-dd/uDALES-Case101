@@ -1,0 +1,5 @@
+% find initd file 
+ls -lh "$SCRATCH_FLASH/output/101"/initd* | tail -n 8
+ln -s /mnt/beegfs/jili/output/101/initd00035608_* .
+lwarmstart = .true.
+startfile  = 'initd00035608_xxx_xxx.101'
