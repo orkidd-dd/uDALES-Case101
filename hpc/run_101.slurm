@@ -54,6 +54,9 @@ echo "uDALES finished"
 echo "End time: $(date)"
 echo "============================================================"
 ============================================================================================================
+mkdir -p $SCRATCH_FLASH/output/101
+ls -ld $SCRATCH_FLASH/output/101
+ls -ld $SCRATCH_FLASH/output/10164
 sbatch run_101.slurm %run
 squeue -j （1977745）
 squeue -j 1975002 % check process
