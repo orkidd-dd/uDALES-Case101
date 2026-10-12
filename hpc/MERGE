@@ -1,7 +1,15 @@
 rm -rf $SCRATCH_FLASH/output/101_2000s
 mv $SCRATCH_FLASH/output/101_3600s $SCRATCH_FLASH/output/101  % 
+srun --partition=cpu_sapphire \
+     --nodes=1 \
+     --ntasks=1 \
+     --cpus-per-task=4 \
+     --mem=8G \
+     --time=3:00:00 \
+     --pty bash
 module load spack/v0.23
 spack load nco@5.2.4
+spack load netcdf-c@4.8.1
 which ncpdq
 which ncrcat
 which ncks
