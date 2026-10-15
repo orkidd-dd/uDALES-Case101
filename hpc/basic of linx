@@ -88,7 +88,13 @@ sacct                       % show job history
 sacct -j JOBID              % show specific job
 
 
-## uDALES
+ls -lah "$SCRATCH_FLASH/output"
+cd "$SCRATCH_FLASH/output/10164"
+pwd
+ls -lah
+grep -nE 'itot|jtot|ktot|xlen|ylen|runtime|u0|tstatsdump|tstatstart|ltdump' \
+"$SCRATCH_FLASH/output/10164/namoptions.101"
+
 
 ncdump -h xytdump.101.nc    % show NetCDF header
 ncdump -h tdump.101.nc      % show NetCDF header
