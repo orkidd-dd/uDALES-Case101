@@ -1,0 +1,56 @@
+clear
+clc
+% load data
+G64='H:\udales_data\u-dales-output\101_64'
+G128='H:\udales_data\u-dales-output\101_128'
+
+%
+sim64=udbase(101,G64)
+sim128=udbase(101,G128)
+uxyt64=sim64.load_stat_xyt('uxyt')
+uxyt128 = sim128.load_stat_xyt('uxyt');
+
+% Compare mean streamwise velocity fields
+%extract vertical coorinates
+z64=sim64.zt(:);
+z128= sim128.zt(:)
+H=16
+%plot
+figure 
+
+meanu64 = (mean(uxyt64, 2))
+meanu128 = (mean(uxyt128, 2));
+
+plot(meanu64,z64/H,'b-','LineWidth',1.5);
+hold on
+plot(meanu128,z128/H,'r--','LineWidth',1.5);
+xlabel('Mean streamwise velocity');
+ylabel('Normalized height z/H');
+legend('64^3','128^3','Location','best');
+title('Grid resolution sensitivity: mean velocity')
+grid on
+yline(1, 'k:', 'Building height');
+%%
+
+%% Grid resolution sensitivity: TKE
+
+
+%% Grid resolution sensitivity: TKE
+
+tke64 = sim64.load_stat_xyt('tketxyc');
+tke128 = sim128.load_stat_xyt('tketxyc');
+
+H = 16;
+
+figure
+plot(mean(tke64, 2), sim64.zt/H, 'b-', 'LineWidth', 1.5);
+hold on
+plot(mean(tke128, 2), sim128.zt/H, 'r--', 'LineWidth', 1.5);
+
+xlabel('TKE (m^2/s^2)');
+ylabel('Normalized height z/H');
+legend('64^3', '128^3', 'Location', 'best');
+title('Grid resolution sensitivity: TKE');
+grid on
+yline(1, 'k:', 'Building height');
+
