@@ -1,1 +1,4 @@
-
+cd "$SCRATCH_FLASH/u-dales-run/101"
+ls -lah
+nano namoptions.101
+nano run_101.slurm
