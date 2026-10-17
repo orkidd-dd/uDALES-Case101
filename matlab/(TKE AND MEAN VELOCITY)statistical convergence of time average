@@ -1,0 +1,173 @@
+%% Statistical convergence: velocity and TKE profiles
+clear
+clc
+file= 'H:\udales_data\u-dales-output\101\tdump.101.nc'
+
+sim = udbase(101,'H:\udales_data\u-dales-output\101');
+% =========================================================
+% 1. Load TKE data
+% =========================================================
+TKE  = sim.load_stat_xyt('tketxyc');
+time = sim.load_stat_xyt('time');
+
+zt_vector = sim.zt(:);
+
+% Building height
+H = 16;
+z_norm = zt_vector / H;
+
+% Averaging windows
+intervals = [
+    600 1600
+    600 2000
+    600 2400
+    600 2800
+    600 3200
+    600 3500
+];
+
+% Common colors for both panels
+colors = lines(size(intervals,1));
+
+% =========================================================
+% 2. Create a single figure with two panels
+% =========================================================
+figure('Color','w','Position',[100 100 1400 600]);
+
+tiledlayout(1,2,'TileSpacing','compact','Padding','compact');
+
+% =========================================================
+% PANEL (a): Mean streamwise velocity
+% =========================================================
+nexttile;
+hold on;
+box on;
+grid on;
+
+%mean streamwise velocity
+ut = sim.load_stat_t('ut'); 
+
+%centre of canyon
+x_target=32;
+y_target = 32; 
+xt = sim.xt;
+yt = sim.yt;
+zt = sim.zt;
+% get the minimum index of x,y. search target closest x,y(30)
+[~, x_index] = min(abs(xt - x_target));
+[~, y_index] = min(abs(yt - y_target));
+% fixed x and y.squeeze,turn 3D to 2D
+
+u_block = squeeze(ut(x_index, y_index, :, :)); 
+
+% time average velocity at each velocity
+u_profile = mean(u_block,2); 
+u_profile = u_profile(:);
+
+% dimensionless process
+H=16; % m height of building
+u_ref =0.14 % friction velocity
+%  Vertical displacement of cell centers
+zt_vector = zt(:)
+
+u_norm = u_profile/u_ref;
+N_layers = length(u_norm)
+z_norm = zt_vector(1:N_layers)/H;
+time_tdump = ncread(file,'time');
+
+for k = 1:size(intervals,1)
+
+    t_start = intervals(k,1);
+    t_end   = intervals(k,2);
+
+    time_index = time_tdump > t_start & time_tdump <= t_end;
+    selected_indices = find(time_index);
+
+    fprintf('Velocity %d-%d s: %d intervals selected\n', ...
+        t_start,t_end,numel(selected_indices));
+
+    if isempty(selected_indices)
+        warning('No velocity data selected for %d-%d s.', ...
+            t_start,t_end);
+        continue;
+    end
+
+    u_selected = squeeze(ut(x_index,y_index,:,selected_indices));
+
+    % Ensure the vertical coordinate is the first dimension
+    if isvector(u_selected)
+        u_profile = u_selected(:);
+    else
+        u_profile = mean(u_selected,2,'omitnan');
+    end
+
+    u_norm = u_profile / u_ref;
+
+    plot(u_norm,z_norm, 'Color',colors(k,:), 'LineWidth',1.8, 'DisplayName',sprintf('%d-%d s',t_start,t_end));
+end
+
+yline(1,'--k','Building height', ...
+    'LineWidth',1.1, ...
+    'HandleVisibility','off');
+
+xlabel('$u/u_*$', 'Interpreter','latex','FontSize',13);
+ylabel('$z/H$', 'Interpreter','latex','FontSize',13);
+title('(a) Mean streamwise velocity','FontSize',13);
+legend('Location','best','FontSize',9);
+ylim([0 max(z_norm)]);
+set(gca,'FontSize',11);
+
+
+% =========================================================
+% PANEL (b): Turbulent kinetic energy
+% =========================================================
+nexttile;
+hold on;
+box on;
+grid on;
+
+for k = 1:size(intervals,1)
+
+    t_start = intervals(k,1);
+    t_end   = intervals(k,2);
+
+    time_index = time >= t_start & time <= t_end;
+
+    fprintf('TKE %d-%d s: %d time points selected\n', ...
+        t_start,t_end,sum(time_index));
+
+    if ~any(time_index)
+        warning('No TKE data selected for %d-%d s.', ...
+            t_start,t_end);
+        continue;
+    end
+
+    tke_profile = mean(TKE(:,time_index),2,'omitnan');
+
+    % Normalize using the same friction velocity as before
+    tke_norm = tke_profile / (0.14^2);
+
+    plot(tke_norm,z_norm, ...
+        'Color',colors(k,:), ...
+        'LineWidth',1.8, ...
+        'DisplayName',sprintf('%d-%d s',t_start,t_end));
+end
+
+yline(1,'--k', 'LineWidth',1.1,'HandleVisibility','off');
+
+xlabel('$TKE/u_*^2$', 'Interpreter','latex','FontSize',13);
+ylabel('$z/H$', 'Interpreter','latex','FontSize',13);
+title('(b) Turbulent kinetic energy','FontSize',13);
+legend('Location','best','FontSize',9);
+ylim([0 max(z_norm)]);
+set(gca,'FontSize',11);
+
+
+% =========================================================
+% 3. Overall title and export
+% =========================================================
+sgtitle('Statistical convergence of time-averaged profiles', ...
+    'FontSize',15,'FontWeight','bold');
+
+exportgraphics(gcf,'velocity_TKE_convergence.png','Resolution',300);
+exportgraphics(gcf,'velocity_TKE_convergence.pdf','ContentType','vector');
