@@ -1,5 +1,6 @@
 % first choose which wall want to be heat, downwind or upwind wall
 % use matlab check the serial number
+
 ========================================================================================================================================================================================================
 % find number when x=40m
 idx = centers(:,1) == 40;
@@ -7,5 +8,11 @@ wall_faces = find(idx);
 disp(wall_faces)
 194-225
 ========================================================================================================================================================================================================
+ls -lah "$SCRATCH_FLASH/u-dales-run"
+cd "$SCRATCH_FLASH/u-dales-run/101_heatedwall"
+grep -nE '^(295|365)\.000000' Tfacinit.inp.101
+sed -i 's/^365\.000000$/465.000000/' Tfacinit.inp.101
+grep -nE '^(295|365|465)\.000000' Tfacinit.inp.101
+grep -nE 'INPUTDIR|OUTDIR|DA_BUILD|cd |cp -r' run_101.slurm
 nano -l Tfacinit.inp.101
 % change manul
