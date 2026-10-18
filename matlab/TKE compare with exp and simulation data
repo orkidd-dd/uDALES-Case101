@@ -1,0 +1,451 @@
+clear
+clc
+
+% =========================================================
+% 1. Load uDALES Case 101
+% ==========================================================
+
+file = 'H:\udales_data\u-dales-output\101_128\tdump.101.nc';
+
+sim = udbase(101,'H:\udales_data\u-dales-output\101_128');
+
+xt = sim.xt;
+yt = sim.yt;
+zt = sim.zt;
+
+% =========================================================
+% 2. Basic parameters
+% ==========================================================
+
+H = 16;              % Canyon/building height [m]
+xc = 32;             % Canyon centre [m]
+
+y_target = 32;       % Experimental PIV plane [m]
+
+u_star_exp = 0.22;   % Experimental friction velocity [m/s]
+u_star_les = 0.14;   % LES friction velocity [m/s]
+
+
+% =========================================================
+% 3. Load velocity variance components
+%
+% Experimental TKE:
+%
+% TKE = 0.5*(sigma_U^2 + sigma_V^2)
+%
+% For LES we use:
+%
+% TKE = 0.5*(u'u' + w'w')
+% ==========================================================
+
+upup = sim.load_stat_t('upuptc');
+wpwp = sim.load_stat_t('wpwptc');
+
+
+% =========================================================
+% 4. Read time information
+% ==========================================================
+
+time = ncread(file,'time');
+
+
+% =========================================================
+% 5. Select statistical averaging period
+%    600 - 3500 s
+% ==========================================================
+
+time_idx = (time >= 600 & time <= 3500);
+
+fprintf('Number of selected time points: %d\n', ...
+    sum(time_idx));
+
+fprintf('Averaging from %.1f s to %.1f s\n', ...
+    min(time(time_idx)), max(time(time_idx)));
+
+
+% =========================================================
+% 6. Calculate 2-component TKE
+% ==========================================================
+
+TKE_2D = 0.5 * (upup + wpwp);
+
+
+% =========================================================
+% 7. Time average TKE
+%
+% TKE_2D dimensions:
+% x × y × z × time
+%
+% Average over dimension 4 = time
+% ==========================================================
+
+TKE_mean = mean( ...
+    TKE_2D(:,:,:,time_idx), ...
+    4, ...
+    'omitnan');
+
+
+% =========================================================
+% 8. Find the LES y-location corresponding to y = 32 m
+% ==========================================================
+
+[~, iy] = min(abs(yt - y_target));
+
+fprintf('Target y = %.2f m\n', y_target);
+fprintf('Nearest LES y = %.2f m\n', yt(iy));
+
+
+% =========================================================
+% 9. Extract x-z plane at y = 32 m
+%
+% TKE_mean:
+% x × y × z
+%
+% TKE_xz:
+% x × z
+% ==========================================================
+
+TKE_xz = squeeze(TKE_mean(:,iy,:));
+
+
+% =========================================================
+% 10. Experimental data
+% ==========================================================
+
+exp_horiz_data = readmatrix('horizontal_TKE.csv');
+
+exp_vert_data = readmatrix('Vertical_TKE.csv');
+
+
+% =========================================================
+% 11. Extract experimental horizontal profile
+% ==========================================================
+
+exp_x_red   = exp_horiz_data(:,3);   % x/H
+exp_tke_red = exp_horiz_data(:,4);   % TKE/u_*^2
+
+
+% =========================================================
+% 12. Convert experimental x/H to physical x [m]
+%
+% x = xc + (x/H)*H
+% ==========================================================
+
+x_exp = xc + exp_x_red * H;
+
+
+% =========================================================
+% 13. Horizontal profile location
+%
+% Based on our current reading of Figure 10:
+%
+% z/H = 0.5
+%
+% Therefore:
+%
+% z = 0.5*H = 8 m
+% ==========================================================
+
+z_target = 0.5 * H;
+
+fprintf('Target z = %.2f m\n', z_target);
+
+
+% =========================================================
+% 14. Interpolate TKE in z direction
+%
+% We have:
+%
+% TKE_xz(x,z)
+%
+% We want:
+%
+% TKE(x,z = 8 m)
+%
+% ==========================================================
+
+TKE_horizontal_all = interp1( zt,TKE_xz.', z_target, 'linear').';
+
+
+% =========================================================
+% 15. Interpolate LES TKE at experimental x locations
+%
+% Known:
+%     xt
+%     TKE_horizontal_all
+%
+% Desired:
+%     x_exp
+% ==========================================================
+
+TKE_interp_exp = interp1( ...
+    xt, ...
+    TKE_horizontal_all, ...
+    x_exp, ...
+    'linear');
+
+
+% =========================================================
+% 16. Remove invalid values if any
+% ==========================================================
+
+valid = ~isnan(TKE_interp_exp) & ...
+        ~isnan(exp_tke_red);
+
+x_exp_valid = x_exp(valid);
+x_red_valid = exp_x_red(valid);
+
+TKE_interp_exp_valid = TKE_interp_exp(valid);
+exp_tke_red_valid = exp_tke_red(valid);
+
+
+% =========================================================
+% 17. Convert experimental normalized TKE
+%     back to dimensional TKE
+%
+% Experimental:
+%
+% TKE/u_*^2
+%
+% Therefore:
+%
+% TKE = (TKE/u_*^2)*u_*^2
+% ==========================================================
+
+exp_tke_dim = ...
+    exp_tke_red_valid * u_star_exp^2;
+
+
+% =========================================================
+% 18. Dimensional TKE comparison
+% ==========================================================
+
+figure
+
+plot( ...
+    x_red_valid, ...
+    exp_tke_dim, ...
+    'o');
+
+hold on
+
+plot( ...
+    x_red_valid, ...
+    TKE_interp_exp_valid, ...
+    '-');
+
+xlabel('x/H');
+
+ylabel('TKE [m^2/s^2]');
+
+legend( ...
+    'Experiment', ...
+    'uDALES', ...
+    'Location','best');
+
+grid on
+
+title('Dimensional TKE comparison');
+
+
+% =========================================================
+% 19. Normalize each dataset by its own u*
+% ==========================================================
+
+exp_tke_norm = ...
+    exp_tke_dim / u_star_exp^2;
+
+les_tke_norm = ...
+    TKE_interp_exp_valid / u_star_les^2;
+
+
+% =========================================================
+% 20. Normalized TKE comparison
+% ==========================================================
+
+figure
+
+plot( ...
+    x_red_valid, ...
+    exp_tke_norm, ...
+    'o');
+
+hold on
+
+plot( ...
+    x_red_valid, ...
+    les_tke_norm, ...
+    '-');
+
+xlabel('x/H');
+
+ylabel('TKE/u_* ');
+
+legend( ...
+    'Experiment (u_* = 0.22)', ...
+    'uDALES (u_* = 0.14)', ...
+    'Location','best');
+
+grid on
+
+title('Normalized TKE comparison');
+
+
+
+%%  Data Extraction and Processing for TKE Comparison
+clear
+clc
+
+file = 'H:\udales_data\u-dales-output\101_128\tdump.101.nc';
+
+sim = udbase(101,'H:\udales_data\u-dales-output\101_128');
+
+xt = sim.xt;
+yt = sim.yt;
+zt = sim.zt;
+
+H = 16;
+xc = 32;
+y_target = 32;
+
+u_star_exp = 0.22;
+u_star_les = 0.14;
+
+time = ncread(file,'time');
+
+time_idx = (time >= 600 & time <= 3500);
+
+upup = sim.load_stat_t('upuptc');
+wpwp = sim.load_stat_t('wpwptc');
+
+TKE_2D = 0.5*(upup + wpwp);
+
+TKE_mean = mean(TKE_2D(:,:,:,time_idx),4,'omitnan');
+
+[~,iy] = min(abs(yt-y_target));
+
+TKE_xz = squeeze(TKE_mean(:,iy,:));
+
+exp_horiz_data = readmatrix('horizontal_TKE.csv');
+exp_vert_data = readmatrix('Vertical_TKE.csv');
+
+exp_x_red = exp_horiz_data(:,3);
+exp_tke_red = exp_horiz_data(:,4);
+
+exp_tke_black = exp_vert_data(:,3);
+exp_z_black = exp_vert_data(:,4);
+
+x_exp = xc + exp_x_red*H;
+z_exp = exp_z_black*H;
+
+z_target = 0.5*H;
+
+TKE_horizontal_all = interp1(zt,TKE_xz',z_target,'linear');
+TKE_horizontal_all = TKE_horizontal_all';
+
+TKE_horizontal_exp = interp1(xt,TKE_horizontal_all,x_exp,'linear');
+
+valid_h = ~isnan(TKE_horizontal_exp) & ~isnan(exp_tke_red);
+
+x_exp_h = exp_x_red(valid_h);
+exp_tke_red_h = exp_tke_red(valid_h);
+TKE_horizontal_exp = TKE_horizontal_exp(valid_h);
+
+exp_tke_horizontal_dim = exp_tke_red_h*u_star_exp^2;
+
+TKE_horizontal_norm = TKE_horizontal_exp/u_star_les^2;
+
+x_target = xc;
+
+TKE_vertical_all = interp1(xt,TKE_xz,x_target,'linear');
+
+TKE_vertical_exp = interp1(zt,TKE_vertical_all,z_exp,'linear');
+
+valid_v = ~isnan(TKE_vertical_exp) & ~isnan(exp_tke_black) & ~isnan(exp_z_black);
+
+z_exp_v = exp_z_black(valid_v);
+exp_tke_black_v = exp_tke_black(valid_v);
+TKE_vertical_exp = TKE_vertical_exp(valid_v);
+
+exp_tke_vertical_dim = exp_tke_black_v*u_star_exp^2;
+
+TKE_vertical_norm = TKE_vertical_exp/u_star_les^2;
+
+figure('Color','w');
+
+plot(x_exp_h,exp_tke_horizontal_dim,'o')
+hold on
+plot(x_exp_h,TKE_horizontal_exp,'-')
+
+xlabel('x/H')
+ylabel('TKE [m^2/s^2]')
+
+legend('Experiment','uDALES','Location','best')
+
+title('Dimensional horizontal TKE comparison')
+
+grid on
+
+
+%% dimensional vertical
+figure('Color','w');
+
+plot(exp_tke_vertical_dim,z_exp_v,'o')
+hold on
+plot(TKE_vertical_exp,z_exp_v,'-')
+
+ylabel('z/H')
+xlabel('TKE [m^2/s^2]')
+
+legend('Experiment','uDALES','Location','best')
+
+title('Dimensional vertical TKE comparison')
+
+grid on
+% compare all together
+
+figure('Color','w','Position',[100 100 900 700]);
+
+ax1 = axes;
+
+hold(ax1,'on');
+
+p1 = plot(ax1,x_exp_h,exp_tke_red_h,'r^','MarkerFaceColor','r','MarkerSize',6);
+p2 = plot(ax1,x_exp_h,TKE_horizontal_norm,'r--','LineWidth',2);
+
+xlabel(ax1,'x/H','FontSize',16,'Color','r')
+ylabel(ax1,'TKE / u_*^2','FontSize',16,'Color','r')
+
+set(ax1,'XAxisLocation','top')
+set(ax1,'YAxisLocation','left')
+set(ax1,'XLim',[-0.5 0.5])
+set(ax1,'YLim',[0 12])
+
+grid(ax1,'on')
+
+ax2 = axes('Position',ax1.Position);
+
+hold(ax2,'on');
+
+p3 = plot(ax2,exp_tke_black_v,z_exp_v,'ko','MarkerFaceColor','k','MarkerSize',5);
+p4 = plot(ax2,TKE_vertical_norm,z_exp_v,'k-','LineWidth',2);
+
+xlabel(ax2,'TKE / u_*^2','FontSize',16,'Color','k')
+ylabel(ax2,'z/H','FontSize',16,'Color','k')
+
+set(ax2,'XAxisLocation','bottom')
+set(ax2,'YAxisLocation','right')
+set(ax2,'Color','none')
+set(ax2,'XLim',[0 12])
+set(ax2,'YLim',[0 1])
+
+grid(ax2,'on')
+
+legend(ax1,[p2 p1],{'TKE Horiz (Sim)','TKE Horiz (Exp)'},'Location','northeast')
+
+legend(ax2,[p4 p3],{'TKE Vert (Sim)','TKE Vert (Exp)'},'Location','northwest')
+
+title(ax1,'Normalized TKE comparison')
+
+set(ax1,'Position',[0.12 0.12 0.75 0.75])
+set(ax2,'Position',ax1.Position)
