@@ -1,0 +1,154 @@
+clear
+clc
+
+% Load four temperature cases
+file0k   = 'H:\udales_data\u-dales-output\101_128';
+file70k  = 'H:\udales_data\u-dales-output\101_70k';
+file170k = 'H:\udales_data\u-dales-output\101_170k';
+file240k = 'H:\udales_data\u-dales-output\101_240k';
+labels = {'0 K', '70 K', '170 K', '240 K'};
+styles = {':', '-', '--', '-.'};
+files = {file0k,file70k,file170k,file240k};
+labels = {'0 K','70 K','170 K','240 K'};
+
+sim0k   = udbase(101,file0k);
+sim70k  = udbase(101,file70k);
+sim170k = udbase(101,file170k);
+sim240k = udbase(101,file240k);
+
+sims = {sim0k,sim70k,sim170k,sim240k};
+
+% Basic parameters
+H = 16;
+xc = 32;
+yc = 32;
+z_target = H/2;
+u_ref = 0.14;
+
+% Use cell-centre coordinates for TKE
+xt = sim0k.xt(:);
+yt = sim0k.yt(:);
+zt = sim0k.zt(:);
+
+% Find canyon centre
+[~,ix] = min(abs(xt-xc));
+[~,iy] = min(abs(yt-yc));
+
+% Horizontal profile within canyon
+Lx = xt > 24 & xt < 40;
+x = xt(Lx);
+x_norm = (x-xc)/H;
+
+% Store four profiles
+TKE_vertical = cell(1,4);
+TKE_horizontal = cell(1,4);
+
+for k = 1:4
+
+    % Read time for each case separately
+    time = ncread(fullfile(files{k}, ...
+        'tdump.101.nc'),'time');
+    time = time(:);
+
+    idx = time >= 600 & time <= 3500;
+
+    assert(any(idx), ...
+        'No time records selected for %s',labels{k});
+
+    % Load two velocity variance components
+    upup = sims{k}.load_stat_t('upuptc');
+    wpwp = sims{k}.load_stat_t('wpwptc');
+
+    assert(size(upup,4)==numel(time), ...
+        'Time dimension mismatch for %s',labels{k});
+
+    assert(isequal(size(upup),size(wpwp)), ...
+        'Variance dimensions differ for %s',labels{k});
+
+    % Check spatial dimensions
+    assert(size(upup,1)==numel(xt) && ...
+           size(upup,2)==numel(yt) && ...
+           size(upup,3)==numel(zt), ...
+           'Grid dimensions differ for %s',labels{k});
+
+    % Two-component TKE
+    TKE_2D = 0.5*(upup + wpwp);
+
+    % Average over 600-3500 s
+    TKE_mean = mean(TKE_2D(:,:,:,idx), ...
+        4,'omitnan');
+
+    % Extract x-z plane at y = 32 m
+    TKE_xz = squeeze(TKE_mean(:,iy,:));
+
+    % Vertical profile at canyon centre
+    TKE_vertical{k} = ...
+        TKE_xz(ix,:)'/u_ref^2;
+
+    % Horizontal profile at z/H = 0.5
+    TKE_h = interp1(zt,TKE_xz', ...
+        z_target,'linear')';
+
+    TKE_horizontal{k} = ...
+        TKE_h(Lx)/u_ref^2;
+
+    fprintf('%s: %d records selected\n', ...
+        labels{k},sum(idx));
+
+    clear upup wpwp TKE_2D TKE_mean TKE_xz
+end
+
+% Limit vertical profile to canyon height
+Lz = zt <= H;
+z_norm = zt(Lz)/H;
+
+
+figure('Color','w','Position',[100 100 1100 450]);
+
+colors = lines(4);
+labels = {'0 K','70 K','170 K','240 K'};
+
+tiledlayout(1,2,'TileSpacing','compact', ...
+    'Padding','compact');
+
+% Vertical TKE
+nexttile
+hold on
+
+for k = 1:4
+    plot(TKE_vertical{k}(Lz),z_norm, ...
+        'Color','k', ...
+        'LineStyle',styles{k}, ...
+        'LineWidth',1.8, ...
+        'DisplayName',labels{k});
+end
+
+xlabel('$TKE_{2D}/u_*^2$','Interpreter','latex')
+ylabel('$z/H$','Interpreter','latex')
+title('(a) Vertical TKE at canyon centre')
+ylim([0 1])
+xlim([0 inf])
+legend('Location','best')
+grid on
+box on
+
+% Horizontal TKE
+nexttile
+hold on
+
+for k = 1:4
+    plot(x_norm,TKE_horizontal{k}, ...
+        'Color','r', ...
+        'LineStyle',styles{k}, ...
+        'LineWidth',1.8, ...
+        'DisplayName',labels{k});
+end
+
+xlabel('$x/H$','Interpreter','latex')
+ylabel('$TKE_{2D}/u_*^2$','Interpreter','latex')
+title('(b) Horizontal TKE at z/H = 0.5')
+xlim([-0.5 0.5])
+ylim([0 inf])
+legend('Location','best')
+grid on
+box on
