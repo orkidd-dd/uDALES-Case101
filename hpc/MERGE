@@ -17,8 +17,9 @@ which ncks
 scp "jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/101/tdump.101.nc" "H:\udales_data\u-dales-output\101\"
 ==================================================================================================================
 % if file name not a case, we should creat shortcut %
-ln -s "$SCRATCH_FLASH/output/101_heatedwall_70K_3600s" / "$SCRATCH_FLASH/output/heatedwall101"
-ln -s "$SCRATCH_FLASH/output/101_heatedwall_170K_3600s" / "$SCRATCH_FLASH/output/heatedwall170K101"
+ln -s "$SCRATCH_FLASH/output/101_heatedwall_70K_3600s"  "$SCRATCH_FLASH/output/heatedwall101"
+ln -s "$SCRATCH_FLASH/output/101_heatedwall_170K_3600s"  "$SCRATCH_FLASH/output/heatedwall170K101"
+ln -s "$SCRATCH_FLASH/output/101_heatedwall_240K_3600s" "$SCRATCH_FLASH/output/heatedwall240K101"
 /home/jili/u-dales/tools/gather_outputs.sh \"$SCRATCH_FLASH/output/heatedwall170K101"
 % go back to terminal download what you need%
 
