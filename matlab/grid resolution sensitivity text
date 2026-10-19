@@ -1,56 +1,132 @@
+%%
 clear
 clc
-% load data
-G64='H:\udales_data\u-dales-output\101_64'
-G128='H:\udales_data\u-dales-output\101_128'
+close all
 
-%
-sim64=udbase(101,G64)
-sim128=udbase(101,G128)
-uxyt64=sim64.load_stat_xyt('uxyt')
+% Load cases
+G64  = 'H:\udales_data\u-dales-output\101_64';
+G128 = 'H:\udales_data\u-dales-output\101_128';
+
+sim64  = udbase(101, G64);
+sim128 = udbase(101, G128);
+
+% Load mean velocity and TKE
+uxyt64  = sim64.load_stat_xyt('uxyt');
 uxyt128 = sim128.load_stat_xyt('uxyt');
 
-% Compare mean streamwise velocity fields
-%extract vertical coorinates
-z64=sim64.zt(:);
-z128= sim128.zt(:)
-H=16
-%plot
-figure 
-
-meanu64 = (mean(uxyt64, 2))
-meanu128 = (mean(uxyt128, 2));
-
-plot(meanu64,z64/H,'b-','LineWidth',1.5);
-hold on
-plot(meanu128,z128/H,'r--','LineWidth',1.5);
-xlabel('Mean streamwise velocity');
-ylabel('Normalized height z/H');
-legend('64^3','128^3','Location','best');
-title('Grid resolution sensitivity: mean velocity')
-grid on
-yline(1, 'k:', 'Building height');
-%%
-
-%% Grid resolution sensitivity: TKE
-
-
-%% Grid resolution sensitivity: TKE
-
-tke64 = sim64.load_stat_xyt('tketxyc');
+tke64  = sim64.load_stat_xyt('tketxyc');
 tke128 = sim128.load_stat_xyt('tketxyc');
 
+% Vertical coordinates
 H = 16;
+z64  = sim64.zt(:)/H;
+z128 = sim128.zt(:)/H;
 
-figure
-plot(mean(tke64, 2), sim64.zt/H, 'b-', 'LineWidth', 1.5);
+% Average over all available output times
+% Load output times for each grid
+time64  = sim64.load_stat_xyt('time');
+time128 = sim128.load_stat_xyt('time');
+
+time64  = time64(:);
+time128 = time128(:);
+
+% Select averaging interval: 600–3500 s
+time_start = 600;
+time_end   = 3500;
+
+idx64  = time64 >= time_start & time64 <= time_end;
+idx128 = time128 >= time_start & time128 <= time_end;
+
+% Check that the selected interval contains data
+assert(any(idx64),  'No 64^3 data within 600–3500 s.');
+assert(any(idx128), 'No 128^3 data within 600–3500 s.');
+
+% Check time dimension (height × time)
+assert(size(uxyt64,2) == numel(time64), ...
+    '64^3 velocity time dimension does not match.');
+assert(size(uxyt128,2) == numel(time128), ...
+    '128^3 velocity time dimension does not match.');
+assert(size(tke64,2) == numel(time64), ...
+    '64^3 TKE time dimension does not match.');
+assert(size(tke128,2) == numel(time128), ...
+    '128^3 TKE time dimension does not match.');
+
+% Mean streamwise velocity over selected times
+meanu64  = mean(uxyt64(:,idx64), 2);
+meanu128 = mean(uxyt128(:,idx128), 2);
+
+% Mean TKE over selected times
+meantke64  = mean(tke64(:,idx64), 2);
+meantke128 = mean(tke128(:,idx128), 2);
+
+% Display actual selected times and number of records
+fprintf('64^3:  %.1f–%.1f s, %d records\n', ...
+    min(time64(idx64)), max(time64(idx64)), sum(idx64));
+
+fprintf('128^3: %.1f–%.1f s, %d records\n', ...
+    min(time128(idx128)), max(time128(idx128)), sum(idx128));
+
+% Figure size for thesis
+fig = figure('Color', 'w', ...
+    'Units', 'centimeters', ...
+    'Position', [2 2 16 10]);
+
+tiledlayout(1, 2, ...
+    'TileSpacing', 'compact', ...
+    'Padding', 'compact');
+
+% (a) Mean streamwise velocity
+ax1 = nexttile;
+
+p1 = plot(meanu64, z64, 'b-', 'LineWidth', 1.5);
 hold on
-plot(mean(tke128, 2), sim128.zt/H, 'r--', 'LineWidth', 1.5);
+p2 = plot(meanu128, z128, 'r--', 'LineWidth', 1.5);
 
-xlabel('TKE (m^2/s^2)');
-ylabel('Normalized height z/H');
-legend('64^3', '128^3', 'Location', 'best');
-title('Grid resolution sensitivity: TKE');
+yline(1, 'k:', 'HandleVisibility', 'off');
+
+xlabel('Mean streamwise velocity (m s^{-1})');
+ylabel('z/H');
+title('(a) Mean velocity', 'FontWeight', 'normal');
+
+legend([p1 p2], {'64^3', '128^3'}, ...
+    'Location', 'best', 'Box', 'off');
+
+ylim([0 4]);
 grid on
-yline(1, 'k:', 'Building height');
+box on
 
+% (b) TKE
+ax2 = nexttile;
+
+p3 = plot(meantke64, z64, 'b-', 'LineWidth', 1.5);
+hold on
+p4 = plot(meantke128, z128, 'r--', 'LineWidth', 1.5);
+
+yline(1, 'k:', 'HandleVisibility', 'off');
+
+xlabel('TKE (m^2 s^{-2})');
+ylabel('z/H');
+title('(b) TKE', 'FontWeight', 'normal');
+
+legend([p3 p4], {'64^3', '128^3'}, ...
+    'Location', 'best', 'Box', 'off');
+
+ylim([0 4]);
+grid on
+box on
+
+% Consistent formatting
+set([ax1 ax2], ...
+    'FontName', 'Times New Roman', ...
+    'FontSize', 10, ...
+    'LineWidth', 0.8, ...
+    'GridAlpha', 0.15);
+
+linkaxes([ax1 ax2], 'y');
+
+% Export to current MATLAB folder
+exportgraphics(fig, 'Mesh_sensitivity.png', ...
+    'Resolution', 600);
+
+exportgraphics(fig, 'Mesh_sensitivity.pdf', ...
+    'ContentType', 'vector');
