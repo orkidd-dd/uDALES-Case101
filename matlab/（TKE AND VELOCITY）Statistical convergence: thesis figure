@@ -1,0 +1,211 @@
+%% Statistical convergence: thesis figure
+% Requires an existing sim object
+
+% ---------------------------------------------------------
+% 1. Load data
+% ---------------------------------------------------------
+ut       = sim.load_stat_t('ut');
+time_u   = sim.load_stat_t('time');
+
+TKE      = sim.load_stat_xyt('tketxyc');
+time_tke = sim.load_stat_xyt('time');
+
+time_u   = time_u(:);
+time_tke = time_tke(:);
+
+H = 16;
+u_ref = 0.14;
+
+z_norm = sim.zt(:)/H;
+
+% Canyon centre: nearest grid point
+x_target = 32;
+y_target = 32;
+
+[~, ix] = min(abs(sim.xt(:) - x_target));
+[~, iy] = min(abs(sim.yt(:) - y_target));
+
+% Arrange local velocity as height × time
+u_block = reshape(ut(ix,iy,:,:), ...
+    numel(z_norm), numel(time_u));
+
+% Check dimensions
+assert(size(TKE,1) == numel(z_norm), ...
+    'TKE and vertical coordinates do not match.');
+
+assert(size(TKE,2) == numel(time_tke), ...
+    'TKE and time dimensions do not match.');
+
+% ---------------------------------------------------------
+% 2. Averaging windows and line styles
+% ---------------------------------------------------------
+intervals = [
+    600 1600
+    600 2000
+    600 2400
+    600 2800
+    600 3200
+    600 3500
+];
+
+n = size(intervals,1);
+
+colors = lines(n);
+colors(end,:) = [0.60 0.30 0.10];   %  % Final window: blown
+
+styles = {'-', '--', '-.', ':', '--', '-'};
+
+labels = arrayfun(@(k) ...
+    sprintf('%d–%d s', intervals(k,1), intervals(k,2)), ...
+    1:n, 'UniformOutput', false);
+
+% Calculate profiles before plotting
+U_profiles   = nan(numel(z_norm), n);
+TKE_profiles = nan(numel(z_norm), n);
+
+for k = 1:n
+
+    % Same endpoint convention for both datasets
+    idx_u = time_u >= intervals(k,1) & ...
+            time_u <= intervals(k,2);
+
+    idx_tke = time_tke >= intervals(k,1) & ...
+              time_tke <= intervals(k,2);
+
+    assert(any(idx_u), ...
+        'No velocity data for %d–%d s.', ...
+        intervals(k,1), intervals(k,2));
+
+    assert(any(idx_tke), ...
+        'No TKE data for %d–%d s.', ...
+        intervals(k,1), intervals(k,2));
+
+    U_profiles(:,k) = ...
+        mean(u_block(:,idx_u), 2, 'omitnan') / u_ref;
+
+    TKE_profiles(:,k) = ...
+        mean(TKE(:,idx_tke), 2, 'omitnan') / u_ref^2;
+
+    fprintf(['%d–%d s: velocity %.0f–%.0f s (%d records); ' ...
+             'TKE %.0f–%.0f s (%d records)\n'], ...
+        intervals(k,1), intervals(k,2), ...
+        min(time_u(idx_u)), max(time_u(idx_u)), sum(idx_u), ...
+        min(time_tke(idx_tke)), max(time_tke(idx_tke)), ...
+        sum(idx_tke));
+end
+
+% ---------------------------------------------------------
+% 3. Figure layout
+% ---------------------------------------------------------
+fig = figure('Color','w', ...
+    'Units','centimeters', ...
+    'Position',[2 2 16 10]);
+
+layout = tiledlayout(fig, 1, 2, ...
+    'TileSpacing','compact', ...
+    'Padding','compact');
+
+% ---------------------------------------------------------
+% (a) Mean streamwise velocity
+% ---------------------------------------------------------
+ax1 = nexttile(layout);
+hold(ax1,'on');
+
+p = gobjects(n,1);
+
+for k = 1:n
+
+    lw = 1.2;
+    if k == n
+        lw = 1.2;
+    end
+
+    p(k) = plot(ax1, U_profiles(:,k), z_norm, ...
+        'Color',colors(k,:), ...
+        'LineStyle',styles{k}, ...
+        'LineWidth',lw);
+end
+
+yline(ax1, 1, 'k--', ...
+    'LineWidth',0.8, ...
+    'HandleVisibility','off');
+
+xlabel(ax1,'$\overline{u}/u_*$', ...
+    'Interpreter','latex');
+
+ylabel(ax1,'$z/H$', ...
+    'Interpreter','latex');
+
+title(ax1,'(a) Mean velocity', ...
+    'FontWeight','normal');
+
+% ---------------------------------------------------------
+% (b) TKE
+% ---------------------------------------------------------
+ax2 = nexttile(layout);
+hold(ax2,'on');
+
+for k = 1:n
+
+    lw = 1.2;
+    if k == n
+        lw = 1.2;
+    end
+
+    plot(ax2, TKE_profiles(:,k), z_norm, ...
+        'Color',colors(k,:), ...
+        'LineStyle',styles{k}, ...
+        'LineWidth',lw);
+end
+
+yline(ax2, 1, 'k--', ...
+    'LineWidth',0.8, ...
+    'HandleVisibility','off');
+
+xlabel(ax2,'$\mathrm{TKE}/u_*^2$', ...
+    'Interpreter','latex');
+
+ylabel(ax2,'$z/H$', ...
+    'Interpreter','latex');
+
+title(ax2,'(b) TKE', ...
+    'FontWeight','normal');
+
+% ---------------------------------------------------------
+% 4. Common formatting
+% ---------------------------------------------------------
+set([ax1 ax2], ...
+    'FontName','Times New Roman', ...
+    'FontSize',10, ...
+    'LineWidth',0.8, ...
+    'TickDir','out', ...
+    'YLim',[0 4], ...
+    'YTick',0:0.5:4, ...
+    'XGrid','on', ...
+    'YGrid','on', ...
+    'GridAlpha',0.12, ...
+    'Box','on');
+
+linkaxes([ax1 ax2],'y');
+
+% Shared legend below the panels
+lgd = legend(ax1, p, labels, ...
+    'NumColumns',3, ...
+    'FontName','Times New Roman', ...
+    'FontSize',9, ...
+    'Box','off');
+
+lgd.Layout.Tile = 'south';
+
+% ---------------------------------------------------------
+% 5. Export
+% ---------------------------------------------------------
+drawnow;
+
+exportgraphics(fig, ...
+    'velocity_TKE_convergence.png', ...
+    'Resolution',600);
+
+exportgraphics(fig, ...
+    'velocity_TKE_convergence.pdf', ...
+    'ContentType','vector');
