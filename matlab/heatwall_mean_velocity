@@ -154,6 +154,7 @@ legend('Location','best')
 grid on
 
 %%
+%%
 clc
 clear
 close all
@@ -259,17 +260,20 @@ for n = 1:4
 
     Fw = griddedInterpolant({xt, yt, zm}, w_mean, ...
         'linear', 'none');
+% Vertical U profile at the canyon centre
+z = zt(zt > 0 & zt <= H);
 
-    % Vertical U profile at the exact canyon centre
-    z = zt(zt > 0 & zt <= H);
+u = Fu( ...
+    xc*ones(size(z)), ...
+    yc*ones(size(z)), ...
+    z);
 
-    u = Fu( ...
-        xc*ones(size(z)), ...
-        yc*ones(size(z)), ...
-        z);
+% Add the no-slip boundary point at the ground: U = 0 at z = 0
+z = [0; z(:)];
+u = [0; u(:)];
 
-    Z_profiles{n} = z/H;
-    U_profiles{n} = u/u_ref;
+Z_profiles{n} = z/H;
+U_profiles{n} = u/u_ref;
 
     % Horizontal W profile at the exact target plane and height
     x = xt(xt > x_left & xt < x_right);
@@ -279,8 +283,12 @@ for n = 1:4
         yc*ones(size(x)), ...
         z_mid*ones(size(x)));
 
-    X_profiles{n} = (x-xc)/H;
-    W_profiles{n} = w/u_ref;
+   % Add W = 0 at the two building walls
+x_plot = [x_left; x(:); x_right];
+w_plot = [0; w(:); 0];
+
+X_profiles{n} = (x_plot-xc)/H;
+W_profiles{n} = w_plot/u_ref;
 
   
 
@@ -365,3 +373,48 @@ xlim(ax2, [(x_left-xc)/H, (x_right-xc)/H]);
 title(ax2, 'Mean Velocity Profiles in the Street Canyon');
 
 ax2.Position = ax1.Position;
+%% if want seperate change from % Combined figure
+%% Figure 1: Vertical U profiles at the canyon centre
+figure('Color', 'w', 'Position', [100 100 650 650]);
+hold on
+
+for n = 1:4
+    plot(U_profiles{n}, Z_profiles{n}, ...
+        'Color', 'k', ...
+        'LineStyle', styles{n}, ...
+        'LineWidth', 1.8);
+end
+
+xlabel('U/u_*');
+ylabel('z/H');
+
+ylim([0 1]);
+
+legend(labels, 'Location', 'best');
+title('Vertical Mean U Profiles at the Canyon Centre');
+
+set(gca, 'FontSize', 12);
+box on
+
+
+%% Figure 2: Horizontal W profiles at z/H = 0.5
+figure('Color', 'w', 'Position', [800 100 650 650]);
+hold on
+
+for n = 1:4
+    plot(X_profiles{n}, W_profiles{n}, ...
+        'Color', 'r', ...
+        'LineStyle', styles{n}, ...
+        'LineWidth', 1.8);
+end
+
+xlabel('(x-x_c)/H');
+ylabel('W/u_*');
+
+xlim([(x_left-xc)/H, (x_right-xc)/H]);
+
+legend(labels, 'Location', 'best');
+title('Horizontal Mean W Profiles at z/H = 0.5');
+
+set(gca, 'FontSize', 12);
+box on
