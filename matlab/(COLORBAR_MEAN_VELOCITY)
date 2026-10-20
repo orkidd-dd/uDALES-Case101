@@ -1,0 +1,146 @@
+clear;
+clc;
+close all;
+
+% Define paths and physical scales
+udales_folder = 'H:\udales_data\u-dales-output\101_128';
+exp_file = 'H_W_1_velocity_magnitude_field_digitized.csv';
+
+H = 16;                 % Building height in m
+x_center = 32;          % Canyon centre in m
+u_ref = 0.14;      % Replace with Reynolds-stress-based u_star
+
+% Load uDALES data
+sim = udbase(101, udales_folder);
+
+% Load time-dependent velocity components
+ut = sim.load_stat_t('ut'); %xm,yt,zt
+wt = sim.load_stat_t('wt');% xt, yt, zm
+time_tdump = sim.load_stat_t('time');
+
+% Load coordinates matching the staggered variables
+xm = sim.load_stat_t('xm');   % u velocity x-coordinate
+xt = sim.load_stat_t('xt');   % w velocity x-coordinate
+zt = sim.load_stat_t('zt');   % u velocity z-coordinate
+zm = sim.load_stat_t('zm');   % w velocity z-coordinate
+
+% Average in the spanwise direction and over time
+% Dimensions after averaging in y: x x z x time
+u_xz_t = squeeze(mean(ut, 2, 'omitnan'));
+w_xz_t = squeeze(mean(wt, 2, 'omitnan'));
+
+% Select the statistical averaging interval
+idx_time = time_tdump >= 600 & time_tdump <= 3500;
+
+% Compute time-averaged velocity fields
+u_mean = mean(u_xz_t(:, :, idx_time), 3, 'omitnan');
+w_mean = mean(w_xz_t(:, :, idx_time), 3, 'omitnan');
+
+% Interpolate w from its staggered grid onto the u grid
+% u_mean is defined on (xm, zt)
+% w_mean is defined on (xt, zm)
+[X_u, Z_u] = meshgrid(xm, zt);
+
+w_on_u_grid = interp2(xt, zm, w_mean', ...
+    X_u, Z_u, 'linear', NaN)';
+
+% Select the H/W = 1 canyon region
+x_mask = xm >= 24 & xm <= 40;
+z_mask = zt >= 0 & zt <= H;
+
+x_sim = xm(x_mask);
+z_sim = zt(z_mask);
+
+u_canyon = u_mean(x_mask, z_mask);
+w_canyon = w_on_u_grid(x_mask, z_mask);
+
+% Calculate and normalize the mean velocity magnitude
+speed_sim = sqrt(u_canyon.^2 + w_canyon.^2);
+speed_sim_norm = speed_sim / u_ref;
+
+% Shift the x-coordinate so that the canyon centre is x/H = 0
+x_sim_norm = (x_sim - x_center) / H;
+z_sim_norm = z_sim / H;
+
+% Load digitized experimental H/W = 1 velocity-magnitude field
+T_exp = readtable(exp_file);
+
+valid_exp = isfinite(T_exp.x_H) & isfinite(T_exp.z_H) & ...
+            isfinite(T_exp.speed_magnitude_over_u_star);
+
+x_exp = T_exp.x_H(valid_exp);
+z_exp = T_exp.z_H(valid_exp);
+speed_exp = T_exp.speed_magnitude_over_u_star(valid_exp);
+% Interpolate experimental data onto a regular grid
+xq = linspace(-0.5, 0.5, 100);
+zq = linspace(0, 1.0, 100);
+
+[X_exp, Z_exp] = meshgrid(xq, zq);
+
+speed_exp_grid = griddata(x_exp, z_exp, speed_exp, ...
+    X_exp, Z_exp, 'natural');
+
+% Plot experimental and uDALES fields side by side
+figure('Color', 'w', 'Position', [100 100 1200 500]);
+tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+% Experimental field
+nexttile;
+
+contourf(X_exp, Z_exp, speed_exp_grid, ...
+         30, 'LineColor', 'none');
+
+set(gca, 'YDir', 'normal');
+
+xlim([-0.5 0.5]);
+ylim([0 1.0]);
+clim([0 9]);
+
+axis equal;
+title('Experiment: H/W = 1');
+xlabel('$x/H$', 'Interpreter', 'latex');
+ylabel('$z/H$', 'Interpreter', 'latex');
+
+set(gca, 'FontSize', 13);
+
+% uDALES field
+nexttile;
+contourf(x_sim_norm, z_sim_norm, speed_sim_norm', ...
+    30, 'LineColor', 'none');
+axis equal tight;
+xlim([-0.5 0.5]);
+ylim([0 1.0]);
+clim([0 9]);
+title('uDALES: H/W = 1');
+xlabel('$x/H$', 'Interpreter', 'latex');
+ylabel('$z/H$', 'Interpreter', 'latex');
+set(gca, 'FontSize', 13);
+
+% Shared colour map and colour bar
+colormap(turbo);
+cb = colorbar;
+cb.Layout.Tile = 'east';
+cb.Label.String = '$\sqrt{U^2+V^2}/u_*$';
+cb.Label.Interpreter = 'latex';
+cb.Label.Rotation = 90;
+% Enlarge figure
+set(gcf, 'Units','centimeters', ...
+    'Position',[2 2 22 16]);
+
+% Enlarge axes labels and titles
+axs = findall(gcf,'Type','axes');
+
+for i = 1:numel(axs)
+    axs(i).FontSize = 14;
+    axs(i).LineWidth = 1;
+    axs(i).XLabel.FontSize = 16;
+    axs(i).YLabel.FontSize = 16;
+    axs(i).Title.FontSize = 16;
+end
+
+% Enlarge colourbar text
+cb.FontSize = 14;
+cb.Label.FontSize = 16;
+
+drawnow;
+
