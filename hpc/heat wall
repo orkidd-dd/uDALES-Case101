@@ -58,4 +58,9 @@ view(3)
 grep -nE '^[[:space:]]*[0-9]+\.[0-9]+[[:space:]]*$' Tfacinit.inp.101 | grep -vE ':[[:space:]]*295\.0+[[:space:]]*$'
 $ sed -i 's/^535\.000000$/295.000000/' Tfacinit.inp.101
 sed -i '97,128s/^295\.000000$/435.000000/' Tfacinit.inp.101
+========================================================================================================================================================================================================================
+grep -nE 'runtime|itot|jtot|ktot|lwarmstart|ltempeq|lbuoyancy' namoptions.101
+grep -n '^435\.000000$' Tfacinit.inp.101
+grep -nE 'INPUTDIR|OUTDIR|DA_BUILD' run_101.slurm
+ls -ld "$SCRATCH_FLASH/output/101_upward_heatedwall_140K_3600s"
 grep -n '^435\.000000$' Tfacinit.inp.101
