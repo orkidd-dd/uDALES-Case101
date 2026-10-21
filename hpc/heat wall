@@ -2,7 +2,7 @@
 % use matlab check the serial number
 
 ========================================================================================================================================================================================================
-% find number when x=40m
+% find number when x=40m downward
 idx = centers(:,1) == 40;
 wall_faces = find(idx);
 disp(wall_faces)
@@ -16,3 +16,46 @@ grep -nE '^(295|365|465)\.000000' Tfacinit.inp.101
 grep -nE 'INPUTDIR|OUTDIR|DA_BUILD|cd |cp -r' run_101.slurm
 nano -l Tfacinit.inp.101
 % change manul
+============================================================================================================================================================================================================
+% upward wall (97-128)
+clc
+clear
+close all
+
+% Load building geometry
+TR = stlread('H:\udales_data\u-dales-output\101_128\geom.101.STL');
+
+% Calculate triangle centres
+F = TR.ConnectivityList;
+P = TR.Points;
+
+centers = (P(F(:,1),:) + P(F(:,2),:) + P(F(:,3),:)) / 3;
+
+% Find faces on the wall at x = 24 m
+idx = abs(centers(:,1) - 24) < 1e-6;
+wall_faces = find(idx);
+
+disp('Wall face numbers at x = 24 m:')
+disp(wall_faces)
+
+% Highlight selected faces
+figure('Color','w')
+trisurf(TR,'FaceColor',[0.8 0.8 0.8], ...
+    'EdgeColor','none','FaceAlpha',0.3)
+hold on
+
+patch('Faces',F(wall_faces,:), ...
+    'Vertices',P, ...
+    'FaceColor','r', ...
+    'EdgeColor','k')
+
+xlabel('x (m)')
+ylabel('y (m)')
+zlabel('z (m)')
+axis equal
+view(3)
+===============================================================================================================================================================================================================
+grep -nE '^[[:space:]]*[0-9]+\.[0-9]+[[:space:]]*$' Tfacinit.inp.101 | grep -vE ':[[:space:]]*295\.0+[[:space:]]*$'
+$ sed -i 's/^535\.000000$/295.000000/' Tfacinit.inp.101
+sed -i '97,128s/^295\.000000$/435.000000/' Tfacinit.inp.101
+grep -n '^435\.000000$' Tfacinit.inp.101
