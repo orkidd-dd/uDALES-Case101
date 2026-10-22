@@ -1,0 +1,114 @@
+python3 - <<'PY'
+import os
+import shutil
+import struct
+from pathlib import Path
+
+root = Path(os.environ["SCRATCH_FLASH"])
+source = root / "u-dales-run/101_HW15/101"
+cases = [
+    (70, 365.0),
+    (170, 465.0),
+    (240, 535.0),
+]
+
+data = (source / "geom.101.STL").read_bytes()
+n = struct.unpack_from("<I", data, 80)[0]
+faces = []
+
+for i in range(n):
+    v = struct.unpack_from("<12fH", data, 84 + 50*i)
+    points = (v[3:6], v[6:9], v[9:12])
+    if all(abs(p[0] - 112/3) < 1e-4 for p in points):
+        faces.append(i + 1)
+
+assert faces == list(range(193, 225)), "Unexpected wall face IDs"
+
+lines = (source / "Tfacinit.inp.101").read_text().splitlines()
+assert len(lines) == n + 1, "Unexpected temperature file format"
+assert lines[0].lstrip().startswith("#"), "Missing header"
+assert all(abs(float(s) - 295) < 1e-6 for s in lines[1:]), \
+    "Source temperatures are not all 295 K"
+
+targets = [
+    root / f"u-dales-run/101_HW15_downwind_{delta}K/101"
+    for delta, _ in cases
+]
+
+for target in targets:
+    if target.parent.exists():
+        raise SystemExit(f"Directory already exists: {target.parent}")
+
+for (delta, temperature), target in zip(cases, targets):
+    shutil.copytree(source, target)
+    updated = lines.copy()
+
+    for face_id in faces:
+        updated[face_id] = f"{temperature:.6f}"
+
+    (target / "Tfacinit.inp.101").write_text(
+        "\n".join(updated) + "\n"
+    )
+
+    values = [float(s) for s in updated[1:]]
+    assert values.count(temperature) == 32
+    assert values.count(295.0) == n - 32
+
+    print(f"Created: {target}")
+    print(f"Heated faces: 32 at {temperature:.1f} K")
+    print(f"Other faces: {n - 32} at 295.0 K")
+PY
+%%
+194–225
+
+==================================================================================
+python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+root = Path(os.environ["SCRATCH_FLASH"])
+template = root / "u-dales-run/101_HW15/run_101.slurm"
+text = template.read_text()
+
+for delta in (70, 170, 240):
+    case = root / f"u-dales-run/101_HW15_downwind_{delta}K"
+    output = root / f"output/HW15_downwind_{delta}K"
+    script = case / "run_101.slurm"
+
+    if script.exists():
+        raise SystemExit(f"Script already exists: {script}")
+    if output.exists():
+        raise SystemExit(f"Output directory already exists: {output}")
+
+for delta in (70, 170, 240):
+    case = root / f"u-dales-run/101_HW15_downwind_{delta}K"
+    output = root / f"output/HW15_downwind_{delta}K"
+    updated = text
+
+    replacements = [
+        (r"^INPUTDIR=.*$", f'INPUTDIR="{case / "101"}"'),
+        (r"^OUTDIR=.*$", f'OUTDIR="{output}"'),
+        (r"^#SBATCH --job-name=.*$",
+         f"#SBATCH --job-name=HW15_DW{delta}"),
+    ]
+
+    for pattern, replacement in replacements:
+        updated, count = re.subn(
+            pattern, lambda m: replacement, updated, flags=re.MULTILINE
+        )
+        assert count == 1, f"Expected one matching line: {pattern}"
+
+    updated = updated.replace(
+        "# ---- Software environment ----",
+        "set -euo pipefail\n\n# ---- Software environment ----"
+    )
+    (case / "run_101.slurm").write_text(updated)
+    print(f"Created: {case / 'run_101.slurm'}")
+    print(f"Output: {output}")
+PY
+=============================================================================================================
+% submit
+cd "$SCRATCH_FLASH/u-dales-run/101_HW15_downwind_70K"
+bash -n run_101.slurm && sbatch run_101.slurm
+============================================================================================================
