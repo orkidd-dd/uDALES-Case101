@@ -29,3 +29,8 @@ scp jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/101_heatedwall_70K_36
 scp jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/u-dales-run/101_heatedwall/Tfacinit.inp.101 "H:/udales_data/u-dales-output/101_360K/"
 scp jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/101_heatedwall_170K_3600s/namoptions.101 "H:/udales_data/u-dales-output/101_170k/"
 scp jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/101_heatedwall_170K_3600s/factypes.inp.101 "H:/udales_data/u-dales-output/101_170k/"
+mkdir -Force "E:\udales_data\up101_140k"
+
+$remote = "jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/upwardheatedwall140K101"
+
+scp "${remote}/factypes.inp.101" "${remote}/geom.101.STL" "${remote}/namoptions.101" "${remote}/solid_c.txt" "${remote}/solid_u.txt" "${remote}/solid_v.txt" "${remote}/solid_w.txt" "${remote}/tdump.101.nc" "${remote}/Tfacinit.inp.101" "${remote}/xytdump.101.nc" "E:/udales_data/up101_140k/"
