@@ -1,0 +1,103 @@
+%% find the wall number on upward wall
+cd "$SCRATCH_FLASH/u-dales-run/101_HW15/101"
+
+python3 - <<'PY'
+import struct
+from pathlib import Path
+
+data = Path("geom.101.STL").read_bytes()
+n = struct.unpack_from("<I", data, 80)[0]
+assert len(data) == 84 + 50*n, "Unexpected STL format"
+
+target_x = 80 / 3
+faces = []
+
+for i in range(n):
+    v = struct.unpack_from("<12fH", data, 84 + 50*i)
+    points = (v[3:6], v[6:9], v[9:12])
+    if all(abs(p[0] - target_x) < 1e-4 for p in points):
+        faces.append(i + 1)
+
+print("Upwind wall x:", target_x)
+print("Face count:", len(faces))
+print("Face IDs:", faces)
+print("Temperature file lines:", [i + 1 for i in faces])
+PY
+%% number is 97–128
+====================================================================================================================
+%% creat 140k,240k folder
+python3 - <<'PY'
+import os
+import re
+import shutil
+from pathlib import Path
+
+root = Path(os.environ["SCRATCH_FLASH"])
+source = root / "u-dales-run/101_HW15/101"
+template = root / "u-dales-run/101_HW15/run_101.slurm"
+cases = [(140, 435.0), (240, 535.0)]
+
+lines = (source / "Tfacinit.inp.101").read_text().splitlines()
+assert len(lines) == 321, "Expected one header and 320 temperatures"
+assert lines[0].lstrip().startswith("#"), "Missing header"
+assert all(abs(float(v) - 295.0) < 1e-6 for v in lines[1:]), \
+    "Baseline temperatures must all be 295 K"
+
+text = template.read_text()
+prepared = []
+
+for delta, temperature in cases:
+    case = root / f"u-dales-run/101_HW15_upwind_{delta}K"
+    output = root / f"output/HW15_upwind_{delta}K"
+    assert not case.exists(), f"Case already exists: {case}"
+    assert not output.exists(), f"Output already exists: {output}"
+
+    script = text
+    replacements = [
+        (r"^INPUTDIR=.*$", f'INPUTDIR="{case / "101"}"'),
+        (r"^OUTDIR=.*$", f'OUTDIR="{output}"'),
+        (r"^#SBATCH --job-name=.*$",
+         f"#SBATCH --job-name=HW15_UW{delta}"),
+    ]
+
+    for pattern, replacement in replacements:
+        script, count = re.subn(
+            pattern, lambda m: replacement,
+            script, flags=re.MULTILINE
+        )
+        assert count == 1, f"Expected one matching line: {pattern}"
+
+    prepared.append((case, output, temperature, script))
+
+for case, output, temperature, script in prepared:
+    shutil.copytree(source, case / "101")
+
+    updated = lines.copy()
+    for face_id in range(97, 129):
+cd "$SCRATCH_FLASH/u-dales-run/101_HW15_upwind_140K"
+bash -n run_101.slurm && sbatch run_101.slurm
+
+        updated[face_id] = f"{temperature:.6f}"
+
+    values = [float(v) for v in updated[1:]]
+    assert values.count(temperature) == 32
+    assert values.count(295.0) == 288
+
+    (case / "101/Tfacinit.inp.101").write_text(
+        "\n".join(updated) + "\n"
+    )
+    (case / "run_101.slurm").write_text(script)
+
+    print(f"Created: {case}")
+    print(f"Upwind: 32 faces at {temperature:.1f} K")
+    print("Other surfaces: 288 faces at 295.0 K")
+    print(f"Output: {output}")
+PY
+
+
+===================================================================================================================
+cd "$SCRATCH_FLASH/u-dales-run/101_HW15_upwind_240K"
+bash -n run_101.slurm && sbatch run_101.slurm
+===================================================================================================================
+cd "$SCRATCH_FLASH/u-dales-run/101_HW15_upwind_140K"
+bash -n run_101.slurm && sbatch run_101.slurm
