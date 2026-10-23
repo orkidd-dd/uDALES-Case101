@@ -111,4 +111,7 @@ PY
 % submit
 cd "$SCRATCH_FLASH/u-dales-run/101_HW15_downwind_70K"
 bash -n run_101.slurm && sbatch run_101.slurm
+%240k
+cd "$SCRATCH_FLASH/u-dales-run/101_HW15_downwind_240K"
+bash -n run_101.slurm && sbatch run_101.slurm
 ============================================================================================================
