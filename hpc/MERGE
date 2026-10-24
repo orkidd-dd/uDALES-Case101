@@ -34,3 +34,66 @@ mkdir -Force "E:\udales_data\up101_140k"
 $remote = "jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/upwardheatedwall140K101"
 
 scp "${remote}/factypes.inp.101" "${remote}/geom.101.STL" "${remote}/namoptions.101" "${remote}/solid_c.txt" "${remote}/solid_u.txt" "${remote}/solid_v.txt" "${remote}/solid_w.txt" "${remote}/tdump.101.nc" "${remote}/Tfacinit.inp.101" "${remote}/xytdump.101.nc" "E:/udales_data/up101_140k/"
+=========================================================================================================================================
+% merge them together
+mkdir -p "$SCRATCH_FLASH/merge_HW15"
+cd "$SCRATCH_FLASH/merge_HW15"
+
+cat > merge_HW15.slurm <<'EOF'
+#!/bin/bash
+#SBATCH --job-name=merge_HW15
+#SBATCH --partition=cpu_sapphire
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=8G
+#SBATCH --time=12:00:00
+#SBATCH --output=merge_%j.out
+#SBATCH --error=merge_%j.err
+
+set -eo pipefail
+
+module load spack/v0.23
+spack load nco@5.2.4
+spack load netcdf-c@4.8.1
+
+export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
+
+name="${1:?Missing case name}"
+target="$SCRATCH_FLASH/output/$name"
+alias_path="$SCRATCH_FLASH/merge_HW15/${name}_101"
+
+test -d "$target"
+test ! -e "$target/tdump.101.nc"
+
+if [ -L "$alias_path" ]; then
+    test "$(readlink -f "$alias_path")" = "$(readlink -f "$target")"
+elif [ -e "$alias_path" ]; then
+    echo "Alias path already exists: $alias_path"
+    exit 1
+else
+    ln -s "$target" "$alias_path"
+fi
+
+echo "Merge started: $(date)"
+echo "Case: $target"
+
+bash /home/jili/u-dales/tools/gather_outputs.sh "$alias_path"
+
+test -s "$target/tdump.101.nc"
+echo "Merge completed: $(date)"
+ls -lh "$target"/*dump.101.nc
+EOF
+========================================================================================================================================
+% run
+for name in \
+    HW15_downwind_70K \
+    HW15_downwind_170K \
+    HW15_downwind_240K \
+    HW15_upwind_140K \
+    HW15_upwind_240K
+do
+    sbatch --job-name="merge_$name" merge_HW15.slurm "$name"
+done
+===================================================================================================================================
+squeue -u jili
