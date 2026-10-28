@@ -230,3 +230,103 @@ squeue -u "$(id -un)"
 printf '\n===== Save this input directory =====\n'
 printf '%s\n' "$HEAT_CASE"
 BASH
+===================================================================================================================
+% merge only tdump with 0K case
+bash <<'BASH'
+set -e
+
+module load spack/v0.23
+spack load nco@5.2.4
+spack load netcdf-c@4.8.1
+
+OUT_DIR="/mnt/beegfs/jili/output/101_HW1_isothermal295_retry_20261028_100515"
+MERGE_DIR="$OUT_DIR/merge_tdump_$(date +%Y%m%d_%H%M%S)_101"
+
+command -v ncpdq
+command -v ncrcat
+command -v ncks
+command -v ncdump
+
+if [ -e "$OUT_DIR/tdump.101.nc" ]; then
+    printf 'Merged file already exists. Inspect it before merging again.\n'
+    exit 1
+fi
+
+# Check all four expected spatial blocks.
+for X in 000 001; do
+    for Y in 000 001; do
+        FILE="$OUT_DIR/tdump.$X.$Y.101.nc"
+        if [ ! -s "$FILE" ]; then
+            printf 'Missing or empty block: %s\n' "$FILE"
+            exit 1
+        fi
+    done
+done
+
+mkdir "$MERGE_DIR"
+
+# Link tdump blocks only. The directory name must end in 101.
+for X in 000 001; do
+    for Y in 000 001; do
+        ln -s "$OUT_DIR/tdump.$X.$Y.101.nc" "$MERGE_DIR/"
+    done
+done
+
+printf '\n===== Merge tdump only =====\n'
+/home/jili/u-dales/tools/gather_outputs.sh "$MERGE_DIR" \
+    > "$MERGE_DIR/merge.log" 2>&1
+
+printf '\n===== Inspect merged NetCDF header =====\n'
+ncdump -h "$MERGE_DIR/tdump.101.nc" \
+    > "$MERGE_DIR/tdump_header.txt"
+head -n 45 "$MERGE_DIR/tdump_header.txt"
+
+printf '\n===== Inspect statistical output times =====\n'
+ncks -H -C -v time "$MERGE_DIR/tdump.101.nc"
+
+printf '\n===== Publish merged file without overwriting =====\n'
+ln "$MERGE_DIR/tdump.101.nc" "$OUT_DIR/tdump.101.nc"
+
+printf '\n===== File size =====\n'
+ls -lh "$OUT_DIR/tdump.101.nc"
+
+printf '\n===== Last merge messages =====\n'
+tail -n 20 "$MERGE_DIR/merge.log"
+
+printf '\nMerge command completed. Original blocks were retained.\n'
+BASH
+================================================================================================================
+%download 
+$localDir = "D:\udales_data\u-dales-output\101_HW1_isothermal295"
+$remoteDir = "jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/101_HW1_isothermal295_retry_20261028_100515"
+
+New-Item -ItemType Directory -Force -Path $localDir | Out-Null
+
+$smallFiles = @(
+    "namoptions.101",
+    "prof.inp.101",
+    "Tfacinit.inp.101",
+    "factypes.inp.101",
+    "geom.101.STL",
+    "xytdump.101.nc",
+    "solid_c.txt",
+    "solid_u.txt",
+    "solid_v.txt",
+    "solid_w.txt"
+)
+
+foreach ($name in $smallFiles) {
+    scp -o ServerAliveInterval=30 -o ServerAliveCountMax=6 `
+        "${remoteDir}/$name" "$localDir/"
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Download failed: $name"
+    }
+}
+
+scp -o ServerAliveInterval=30 -o ServerAliveCountMax=6 `
+    "${remoteDir}/tdump.101.nc" "$localDir/"
+
+if ($LASTEXITCODE -ne 0) {
+    throw "tdump download failed."
+}
