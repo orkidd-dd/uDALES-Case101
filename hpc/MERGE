@@ -99,4 +99,4 @@ done
 squeue -u jili
 %%download
 $remote = "jili@hpc-legionlogin.polito.it:/mnt/beegfs/jili/output/101_HW1_isothermal295_retry_20261028_100515"
-scp -o ServerAliveInterval=30 -o ServerAliveCountMax=6 "${remote}/namoptions.101" "${remote}/prof.inp.101" "${remote}/Tfacinit.inp.101" "${remote}/factypes.inp.101" "${remote}/geom.101.STL" "${remote}/xytdump.101.nc" "${remote}/solid_c.txt" "${remote}/solid_u.txt" "${remote}/solid_v.txt" "${remote}/solid_w.txt" "${remote}/tdump.101.nc" "D:/udales_data/u-dales-output/101_HW1_isothermal295/"
+scp "${remote}/factypes.inp.101" "${remote}/geom.101.STL" "${remote}/namoptions.101" "${remote}/prof.inp.101" "${remote}/solid_c.txt" "${remote}/solid_u.txt" "${remote}/solid_v.txt" "${remote}/solid_w.txt" "${remote}/Tfacinit.inp.101" "${remote}/xytdump.101.nc" "${remote}/tdump.101.nc" "D:/udales_data/u-dales-output/101_HW1_isothermal295/"
