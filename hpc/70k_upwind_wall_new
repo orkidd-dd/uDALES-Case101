@@ -1,0 +1,232 @@
+bash <<'BASH'
+set -euo pipefail
+
+: "${SCRATCH_FLASH:?SCRATCH_FLASH is not set}"
+
+export HEAT_SOURCE="$SCRATCH_FLASH/u-dales-run/101_HW1_isothermal295_20261028_100121"
+export HEAT_RUNROOT="$SCRATCH_FLASH/u-dales-run"
+export HEAT_OUTROOT="$SCRATCH_FLASH/output"
+export HEAT_LABEL="101_HW1_DW_exp70K_provisional_$(date +%Y%m%d_%H%M%S)"
+
+python3 <<'PY'
+import os
+import re
+import math
+import struct
+import shutil
+from pathlib import Path
+
+src = Path(os.environ["HEAT_SOURCE"])
+dst = Path(os.environ["HEAT_RUNROOT"]) / os.environ["HEAT_LABEL"]
+out = Path(os.environ["HEAT_OUTROOT"]) / os.environ["HEAT_LABEL"]
+
+T0 = 295.0
+ustar = 0.14
+height = 16.0
+target_fr = 0.62
+delta = ustar**2 * T0 / (9.81 * height * target_fr**2)
+
+required = [
+    "namoptions.101", "prof.inp.101",
+    "Tfacinit.inp.101", "geom.101.STL",
+    "scalarsourcel.inp.1.101", "run_101.slurm",
+]
+for name in required:
+    path = src / name
+    if not path.is_file() or path.stat().st_size == 0:
+        raise SystemExit(f"Missing or empty input: {path}")
+
+if dst.exists() or out.exists():
+    raise SystemExit("Destination already exists.")
+
+# Check the baseline thermal and startup settings.
+nam = (src / "namoptions.101").read_text()
+active = "\n".join(line.split("!")[0] for line in nam.splitlines())
+
+def get_value(key):
+    values = re.findall(
+        rf"(?im)^\s*{re.escape(key)}\s*=\s*([^,\n]+)", active
+    )
+    if len(values) != 1:
+        raise SystemExit(f"Expected one parameter: {key}")
+    return values[0].strip().lower()
+
+for key in ("thls", "thl_top", "thl0", "facT"):
+    if float(get_value(key)) != T0:
+        raise SystemExit(f"Unexpected baseline temperature: {key}")
+
+for key in ("lwarmstart", "lstratstart"):
+    if get_value(key) != ".false.":
+        raise SystemExit(f"Cold start check failed: {key}")
+
+for key in ("lbuoyancy", "ltempeq"):
+    if get_value(key) != ".true.":
+        raise SystemExit(f"Required physics is disabled: {key}")
+
+if int(get_value("iwalltemp")) != 2:
+    raise SystemExit("Expected iwalltemp = 2.")
+
+# Confirm the actual initial air profile is at 295 K.
+rows = [
+    line.split()
+    for line in (src / "prof.inp.101").read_text().splitlines()
+    if line.strip() and not line.lstrip().startswith(("#", "!"))
+]
+if len(rows) != 128 or any(float(row[1]) != T0 for row in rows):
+    raise SystemExit("Initial air profile verification failed.")
+
+# Read binary or ASCII STL, preserving triangle order.
+raw = (src / "geom.101.STL").read_bytes()
+triangles = []
+
+if len(raw) >= 84:
+    count = struct.unpack_from("<I", raw, 80)[0]
+else:
+    count = 0
+
+if len(raw) == 84 + 50 * count:
+    for i in range(count):
+        record = struct.unpack_from("<12fH", raw, 84 + 50*i)
+        triangles.append([
+            record[3:6], record[6:9], record[9:12]
+        ])
+else:
+    text = raw.decode("ascii")
+    vertices = re.findall(
+        r"\bvertex\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)",
+        text, re.I
+    )
+    if len(vertices) % 3:
+        raise SystemExit("Unexpected ASCII STL format.")
+    vertices = [tuple(map(float, v)) for v in vertices]
+    triangles = [
+        vertices[i:i+3] for i in range(0, len(vertices), 3)
+    ]
+
+header_lines = (src / "Tfacinit.inp.101").read_text().splitlines()
+if not header_lines[0].lstrip().startswith("#"):
+    raise SystemExit("Unexpected facet temperature header.")
+
+old_values = [float(x) for x in header_lines[1:] if x.strip()]
+if len(triangles) != 320 or len(old_values) != 320:
+    raise SystemExit("Expected 320 STL triangles and temperatures.")
+if any(value != T0 for value in old_values):
+    raise SystemExit("Source is not the uniform-temperature baseline.")
+
+# Select the complete canyon-facing DW wall at x = 40 m.
+selected = []
+area = 0.0
+for i, tri in enumerate(triangles):
+    z = [v[2] for v in tri]
+    if (
+        all(abs(v[0] - 40.0) < 1e-4 for v in tri)
+        and min(z) >= -1e-4
+        and max(z) <= height + 1e-4
+        and max(z) - min(z) > 1e-4
+    ):
+        selected.append(i)
+        a = [tri[1][j] - tri[0][j] for j in range(3)]
+        b = [tri[2][j] - tri[0][j] for j in range(3)]
+        cross = (
+            a[1]*b[2] - a[2]*b[1],
+            a[2]*b[0] - a[0]*b[2],
+            a[0]*b[1] - a[1]*b[0],
+        )
+        area += 0.5 * math.sqrt(sum(v*v for v in cross))
+
+if len(selected) != 32:
+    raise SystemExit(f"Expected 32 DW triangles, found {len(selected)}")
+
+wall_vertices = [v for i in selected for v in triangles[i]]
+ymin = min(v[1] for v in wall_vertices)
+ymax = max(v[1] for v in wall_vertices)
+zmin = min(v[2] for v in wall_vertices)
+zmax = max(v[2] for v in wall_vertices)
+
+if (
+    abs(zmin) > 1e-4 or abs(zmax-height) > 1e-4
+    or not math.isclose(area, (ymax-ymin)*height, rel_tol=1e-5)
+):
+    raise SystemExit("Selected wall coverage verification failed.")
+
+# Reuse the existing environment and resource settings.
+script = (src / "run_101.slurm").read_text()
+for key, value in (("INPUTDIR", dst), ("OUTDIR", out)):
+    pattern = rf"(?m)^{key}=.*$"
+    if len(re.findall(pattern, script)) != 1:
+        raise SystemExit(f"Unexpected script assignment: {key}")
+    script = re.sub(pattern, lambda m: f'{key}="{value}"', script)
+
+script, count = re.subn(
+    r"(?m)^#SBATCH --job-name=.*$",
+    "#SBATCH --job-name=DW70_Fr062",
+    script
+)
+if count != 1:
+    raise SystemExit("Unexpected Slurm job-name configuration.")
+
+# Copy all numbered input files, including the scalar source file.
+dst.mkdir()
+for path in src.iterdir():
+    if path.is_file() and (
+        ".inp." in path.name
+        or path.suffix.lower() in (".txt", ".stl")
+        or path.name == "config.sh"
+    ):
+        shutil.copy2(path, dst / path.name)
+
+(dst / "namoptions.101").write_text(nam)
+(dst / "run_101.slurm").write_text(script)
+
+temperatures = [T0] * 320
+for i in selected:
+    temperatures[i] = T0 + delta
+
+temp_path = dst / "Tfacinit.inp.101"
+temp_path.write_text(
+    header_lines[0] + "\n"
+    + "".join(f"{value:.9f}\n" for value in temperatures)
+)
+
+written = [
+    float(x) for x in temp_path.read_text().splitlines()[1:]
+    if x.strip()
+]
+heated = [i for i, value in enumerate(written) if value > T0]
+if heated != selected:
+    raise SystemExit("Written heated-facet verification failed.")
+
+report = (
+    f"Input directory: {dst}\n"
+    f"Output directory: {out}\n"
+    f"Reference temperature: {T0:.6f} K\n"
+    f"Assumed friction velocity: {ustar:.6f} m/s\n"
+    f"Target internal Froude number: {target_fr:.6f}\n"
+    f"LES temperature difference: {delta:.9f} K\n"
+    f"DW temperature: {T0+delta:.9f} K\n"
+    f"Heated facet count: {len(selected)}\n"
+    f"Heated wall area: {area:.6f} m2\n"
+    f"Heated facet IDs: {[i+1 for i in selected]}\n"
+    "Status: provisional; verify using the new baseline friction velocity.\n"
+)
+(dst / "case_summary.txt").write_text(report)
+print("\nInput checks passed.\n" + report)
+PY
+
+HEAT_CASE="$HEAT_RUNROOT/$HEAT_LABEL"
+
+printf '\n===== Check submission script syntax =====\n'
+bash -n "$HEAT_CASE/run_101.slurm"
+
+printf '\n===== Submit provisional DW heating case =====\n'
+(
+    cd "$HEAT_CASE"
+    sbatch run_101.slurm
+)
+
+printf '\n===== Current job queue =====\n'
+squeue -u "$(id -un)"
+
+printf '\n===== Save this input directory =====\n'
+printf '%s\n' "$HEAT_CASE"
+BASH
