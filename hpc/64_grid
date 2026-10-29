@@ -1,0 +1,265 @@
+bash <<'BASH'
+set -euo pipefail
+
+export COARSE_SOURCE="/mnt/beegfs/jili/u-dales-run/101_HW1_isothermal295_7200s_20261028_192323"
+export COARSE_ROOT="/mnt/beegfs/jili/u-dales-run/101_HW1_isothermal295_64grid_7200s_$(date +%Y%m%d_%H%M%S)"
+export COARSE_OUTPUT="/mnt/beegfs/jili/output/$(basename "$COARSE_ROOT")"
+
+python3 <<'PY'
+import os
+import re
+import shutil
+from pathlib import Path
+
+src = Path(os.environ["COARSE_SOURCE"])
+root = Path(os.environ["COARSE_ROOT"])
+out = Path(os.environ["COARSE_OUTPUT"])
+case = root / "101"
+tools = Path("/home/jili/u-dales/tools")
+
+required = (
+    "namoptions.101",
+    "geom.101.STL",
+    "factypes.inp.101",
+    "scalarsourcel.inp.1.101",
+)
+
+for name in required:
+    p = src / name
+    if not p.is_file() or p.stat().st_size == 0:
+        raise SystemExit(f"Missing or empty source input: {p}")
+
+for name in ("write_inputs.m", "preprocessing.m"):
+    if not (tools / name).is_file():
+        raise SystemExit(f"Missing preprocessing tool: {name}")
+
+if root.exists() or out.exists():
+    raise SystemExit("Destination exists. Stop to avoid overwriting.")
+
+nam = (src / "namoptions.101").read_text()
+
+def get_value(key):
+    active = "\n".join(line.split("!")[0] for line in nam.splitlines())
+    matches = re.findall(
+        rf"(?im)^\s*{re.escape(key)}\s*=\s*([^,\n]+)", active
+    )
+    if len(matches) != 1:
+        raise SystemExit(f"Expected exactly one parameter: {key}")
+    return matches[0].strip().lower()
+
+for key in ("thl0", "thls", "thl_top", "facT"):
+    if float(get_value(key)) != 295:
+        raise SystemExit(f"Source temperature check failed: {key}")
+
+for key in ("lwarmstart", "lstratstart"):
+    if get_value(key) != ".false.":
+        raise SystemExit(f"Cold-start check failed: {key}")
+
+if float(get_value("uflowrate")) != 1.5:
+    raise SystemExit("Unexpected source forcing.")
+
+for key in ("xlen", "ylen", "zsize"):
+    if float(get_value(key)) != 64:
+        raise SystemExit(f"Unexpected domain size: {key}")
+
+def set_value(key, value, group=None):
+    global nam
+    pattern = rf"(?im)^\s*{re.escape(key)}\s*=.*$"
+    matches = list(re.finditer(pattern, nam))
+    if len(matches) > 1:
+        raise SystemExit(f"Duplicate parameter: {key}")
+    if matches:
+        nam = re.sub(pattern, f"{key} = {value}", nam, count=1)
+    elif group:
+        nam, count = re.subn(
+            rf"(?im)^\s*&{group}\s*$",
+            f"&{group}\n{key} = {value}",
+            nam,
+            count=1,
+        )
+        if count != 1:
+            raise SystemExit(f"Missing namelist group: {group}")
+    else:
+        raise SystemExit(f"Missing parameter: {key}")
+
+for key in ("itot", "jtot", "ktot"):
+    set_value(key, "64")
+
+set_value("runtime", "7200.")
+set_value("gen_geom", ".true.", "INPS")
+set_value("nompthreads", "4", "INPS")
+
+case.mkdir(parents=True)
+(case / "namoptions.101").write_text(nam)
+
+# Copy physical definitions only; regenerate grid-dependent inputs.
+for name in required[1:]:
+    shutil.copy2(src / name, case / name)
+
+# Isolate preprocessing tools because the geometry routine compiles helpers.
+shutil.copytree(
+    tools,
+    root / "tools",
+    ignore=shutil.ignore_patterns(".venv", "__pycache__", ".git"),
+)
+
+validator = r'''import re
+import math
+from pathlib import Path
+
+p = Path(__file__).parent / "101"
+nam = (p / "namoptions.101").read_text()
+active = "\n".join(line.split("!")[0] for line in nam.splitlines())
+
+def value(key):
+    m = re.findall(rf"(?im)^\s*{key}\s*=\s*([^,\n]+)", active)
+    assert len(m) == 1, (key, m)
+    return m[0].strip().lower()
+
+def rows(name):
+    return [
+        list(map(float, line.split()))
+        for line in (p / name).read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "!"))
+    ]
+
+for key in ("itot", "jtot", "ktot"):
+    assert int(value(key)) == 64, key
+
+for key in ("xlen", "ylen", "zsize"):
+    assert float(value(key)) == 64, key
+
+assert float(value("runtime")) == 7200
+assert float(value("uflowrate")) == 1.5
+assert float(value("randthl")) == 0
+assert int(value("nprocx")) == 2
+assert int(value("nprocy")) == 2
+
+for key in ("lwarmstart", "lstratstart"):
+    assert value(key) == ".false.", key
+
+for key in ("thl0", "thls", "thl_top", "facT"):
+    assert float(value(key)) == 295, key
+
+profile = rows("prof.inp.101")
+assert len(profile) == 64, len(profile)
+
+for i, row in enumerate(profile):
+    assert len(row) == 6
+    assert all(math.isfinite(x) for x in row)
+    assert abs(row[0] - (i + 0.5)) < 1e-7
+    assert row[1] == 295
+    assert row[3] == 1.5
+
+assert len(rows("scalar.inp.101")) == 64
+assert len(rows("lscale.inp.101")) == 64
+
+temperatures = rows("Tfacinit.inp.101")
+assert len(temperatures) == int(value("nfcts"))
+assert all(row == [295.0] for row in temperatures)
+
+for axis in ("c", "u", "v", "w"):
+    for prefix in ("solid", "fluid_boundary", "facet_sections"):
+        f = p / f"{prefix}_{axis}.txt"
+        assert f.is_file() and f.stat().st_size > 0, f
+
+    assert 0 < int(value("nsolpts_" + axis)) <= 64**3
+
+    for prefix in ("solid", "fluid_boundary"):
+        f = p / f"{prefix}_{axis}.txt"
+        for line in f.read_text().splitlines():
+            if line.strip() and not line.lstrip().startswith(("#", "!")):
+                indices = list(map(int, line.split()[:3]))
+                assert len(indices) == 3
+                assert all(1 <= j <= 64 for j in indices), (f, indices)
+
+for name in (
+    "facets.inp.101",
+    "facetarea.inp.101",
+    "factypes.inp.101",
+    "scalarsourcel.inp.1.101",
+):
+    f = p / name
+    assert f.is_file() and f.stat().st_size > 0, f
+
+assert not list(p.glob("initd*"))
+assert not list(p.glob("inits*"))
+
+print("64-grid input checks passed.")
+print("Grid: 64 x 64 x 64; spacing: 1 m.")
+print("Air, all facets and top: 295 K.")
+print("Cold start; target velocity: 1.5 m/s; runtime: 7200 s.")
+'''
+
+(root / "validate_64grid.py").write_text(validator)
+
+job = f'''#!/bin/bash
+#SBATCH --job-name=HW1_64_iso7200
+#SBATCH --partition=cpu_sapphire
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=32G
+#SBATCH --time=24:00:00
+#SBATCH --output={root}/udales64_%j.out
+#SBATCH --error={root}/udales64_%j.err
+
+set -eo pipefail
+
+module load spack/v0.23
+module load gcc/12.4.0
+module load openmpi/5.0.7_gcc12
+module load cmake/3.26
+module load fftw/3.3.10
+spack load netcdf-fortran@4.6.1
+module load matlab/2024b
+
+export HWLOC_LIBXML=0
+export DA_EXPDIR="{root}"
+export DA_TOOLSDIR="{root}/tools"
+export MATLAB_USE_USERWORK=0
+export OMP_NUM_THREADS=4
+
+echo "Starting 64-grid preprocessing: $(date)"
+echo "Host: $(hostname)"
+
+cd "$DA_TOOLSDIR"
+matlab -batch "expnr=101; write_inputs" > "{root}/preprocessing.log" 2>&1
+
+python3 "{root}/validate_64grid.py"
+
+test -x /home/jili/u-dales/build/release/u-dales
+mkdir "{out}"
+cp -r "{case}/." "{out}/"
+
+export OMP_NUM_THREADS=1
+cd "{out}"
+
+echo "Starting 64-grid uDALES: $(date)"
+mpirun --bind-to none --map-by slot -np 4 \
+    /home/jili/u-dales/build/release/u-dales namoptions.101
+
+echo "uDALES finished: $(date)"
+'''
+
+(root / "run_64grid.slurm").write_text(job)
+
+print(f"New input directory: {case}")
+print(f"New output directory: {out}")
+print(f"Preprocessing log: {root}/preprocessing.log")
+print("Existing cases and results were retained.")
+PY
+
+printf '\n===== Check submission script =====\n'
+bash -n "$COARSE_ROOT/run_64grid.slurm"
+
+printf '\n===== Submit preprocessing and simulation =====\n'
+sbatch "$COARSE_ROOT/run_64grid.slurm"
+
+printf '\n===== Current queue =====\n'
+squeue -u "$(id -un)"
+
+printf '\n===== Save this working directory =====\n'
+printf '%s\n' "$COARSE_ROOT"
+BASH
