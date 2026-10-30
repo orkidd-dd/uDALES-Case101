@@ -1,3 +1,6 @@
+%%%% Environment and parameter settings: define input paths, physical constants
+(such as friction velocity,reference temperature T etc.), and the parameters for the three experimental cases to be run.
+##
 bash <<'BASH'
 set -euo pipefail
 
