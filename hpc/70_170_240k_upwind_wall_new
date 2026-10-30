@@ -1,0 +1,373 @@
+bash <<'BASH'
+set -euo pipefail
+
+python3 <<'PY'
+import csv
+import hashlib
+import math
+import re
+import shutil
+import struct
+import subprocess
+from datetime import datetime
+from pathlib import Path
+
+# ===== Settings =====
+source = Path(
+    "/mnt/beegfs/jili/u-dales-run/"
+    "101_HW1_isothermal295_7200s_20261028_192323"
+)
+run_parent = Path("/mnt/beegfs/jili/u-dales-run")
+out_parent = Path("/mnt/beegfs/jili/output")
+executable = Path("/home/jili/u-dales/build/release/u-dales")
+
+ustar = 0.059
+T0 = 295.0
+H = 16.0
+g = 9.81
+
+cases = [(70, 0.62), (170, 0.40), (240, 0.34)]
+stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+expected_hash = (
+    "0b900be706755b63b1d6c5e2d1b360458"
+    "e1c31c739122619625c7404813a4351"
+)
+
+# ===== Check baseline inputs =====
+required = [
+    "namoptions.101", "geom.101.STL",
+    "facets.inp.101", "facetarea.inp.101",
+    "factypes.inp.101", "Tfacinit.inp.101",
+    "prof.inp.101", "scalar.inp.101",
+    "lscale.inp.101", "scalarsourcel.inp.1.101",
+]
+
+for axis in ("c", "u", "v", "w"):
+    for prefix in ("solid", "fluid_boundary", "facet_sections"):
+        required.append(f"{prefix}_{axis}.txt")
+
+for name in required:
+    p = source / name
+    if not p.is_file() or p.stat().st_size == 0:
+        raise SystemExit(f"Missing or empty input: {p}")
+
+if not executable.is_file():
+    raise SystemExit(f"Executable not found: {executable}")
+
+nam = (source / "namoptions.101").read_text()
+active = "\n".join(line.split("!")[0] for line in nam.splitlines())
+
+def value(key):
+    matches = re.findall(
+        rf"(?im)^\s*{re.escape(key)}\s*=\s*([^,\n]+)",
+        active,
+    )
+    if len(matches) != 1:
+        raise SystemExit(f"Expected one active parameter: {key}")
+    return matches[0].strip().lower()
+
+def number(key):
+    return float(value(key).replace("d", "e"))
+
+expected_numbers = {
+    "itot": 128, "jtot": 128, "ktot": 128,
+    "xlen": 64, "ylen": 64, "zsize": 64,
+    "runtime": 7200, "uflowrate": 1.5,
+    "thl0": 295, "thls": 295,
+    "thl_top": 295, "facT": 295,
+    "wtsurf": 0, "randthl": 0,
+    "iwalltemp": 2, "BCtopT": 2,
+    "nprocx": 2, "nprocy": 2,
+}
+
+for key, expected in expected_numbers.items():
+    if number(key) != expected:
+        raise SystemExit(
+            f"Baseline check failed: {key} = {value(key)}"
+        )
+
+for key in ("lwarmstart", "lstratstart"):
+    if value(key) != ".false.":
+        raise SystemExit(f"Cold-start check failed: {key}")
+
+for key in (
+    "lbuoyancy", "ltempeq", "luvolflowr",
+    "lvreman", "lxytdump", "ltdump",
+):
+    if value(key) != ".true.":
+        raise SystemExit(f"Required setting is disabled: {key}")
+
+energy_settings = re.findall(
+    r"(?im)^\s*lEB\s*=\s*([^,\n]+)", active
+)
+if any(v.strip().lower() != ".false." for v in energy_settings):
+    raise SystemExit("Surface energy balance must be disabled.")
+
+def rows(path):
+    return [
+        line.split()
+        for line in path.read_text().splitlines()
+        if line.strip()
+        and not line.lstrip().startswith(("#", "!"))
+    ]
+
+profile = rows(source / "prof.inp.101")
+if len(profile) != 128:
+    raise SystemExit("Expected 128 profile rows.")
+
+if any(float(row[1]) != T0 for row in profile):
+    raise SystemExit("Initial air temperature is not uniformly 295 K.")
+
+base_temperatures = rows(source / "Tfacinit.inp.101")
+if len(base_temperatures) != 320:
+    raise SystemExit("Expected 320 facet temperatures.")
+
+if any(len(row) != 1 or float(row[0]) != T0
+       for row in base_temperatures):
+    raise SystemExit("Baseline facet temperatures are not uniformly 295 K.")
+
+# ===== Identify DW from geometry and check facet ordering =====
+geometry = (source / "geom.101.STL").read_bytes()
+
+if hashlib.sha256(geometry).hexdigest() != expected_hash:
+    raise SystemExit("Geometry checksum differs from the verified baseline.")
+
+ntri = struct.unpack_from("<I", geometry, 80)[0]
+if len(geometry) != 84 + 50 * ntri:
+    raise SystemExit("Unexpected binary STL structure.")
+
+facet_rows = rows(source / "facets.inp.101")
+if len(facet_rows) != ntri or ntri != int(number("nfcts")):
+    raise SystemExit("STL and facet counts differ.")
+
+dw = []
+area_sum = 0.0
+
+for i in range(ntri):
+    record = struct.unpack_from("<12fH", geometry, 84 + 50*i)
+    normal = record[:3]
+    vertices = [record[3:6], record[6:9], record[9:12]]
+
+    if len(facet_rows[i]) != 4:
+        raise SystemExit(f"Unexpected facet input format at row {i+1}.")
+
+    saved_normal = tuple(map(float, facet_rows[i][1:4]))
+
+    if any(abs(a-b) > 2e-4
+           for a, b in zip(normal, saved_normal)):
+        raise SystemExit(
+            f"STL/facet normal mismatch at facet {i+1}. "
+            "No jobs submitted."
+        )
+
+    on_dw = all(abs(v[0]-40.0) < 1e-6 for v in vertices)
+    inside_height = all(-1e-6 <= v[2] <= H+1e-6 for v in vertices)
+
+    if on_dw and inside_height:
+        a, b, c = vertices
+        ab = [b[k]-a[k] for k in range(3)]
+        ac = [c[k]-a[k] for k in range(3)]
+
+        cross = [
+            ab[1]*ac[2]-ab[2]*ac[1],
+            ab[2]*ac[0]-ab[0]*ac[2],
+            ab[0]*ac[1]-ab[1]*ac[0],
+        ]
+
+        area = 0.5*math.sqrt(sum(x*x for x in cross))
+        if area <= 0:
+            raise SystemExit("Degenerate DW triangle.")
+
+        dw.append(i)
+        area_sum += area
+
+if len(dw) != 32 or abs(area_sum-64*H) > 1e-4:
+    raise SystemExit(
+        f"DW selection failed: count={len(dw)}, area={area_sum}"
+    )
+
+# Require the geometry IDs established from the verified STL.
+if [i+1 for i in dw] != list(range(193, 225)):
+    raise SystemExit("Unexpected DW facet IDs. No jobs submitted.")
+
+print("\n===== Input checks passed =====")
+print("DW location: x = 40 m")
+print("DW facet IDs: 193-224, one-based")
+print(f"DW facet count: {len(dw)}")
+print(f"DW area: {area_sum:.3f} m^2")
+print(f"Reference friction velocity: {ustar} m/s")
+
+# ===== Collect input files only =====
+input_files = set()
+
+for pattern in (
+    "*.inp.101", "*.inp.*.101",
+    "solid_*.txt", "fluid_boundary_*.txt",
+    "facet_sections_*.txt",
+):
+    input_files.update(
+        p for p in source.glob(pattern) if p.is_file()
+    )
+
+input_files.add(source / "namoptions.101")
+input_files.add(source / "geom.101.STL")
+
+prepared = []
+
+# ===== Prepare all three cases before submitting =====
+for exp_label, target_fr in cases:
+    delta_t = ustar**2*T0/(g*H*target_fr**2)
+    wall_temperature = T0+delta_t
+
+    label = (
+        f"101_HW1_DW_exp{exp_label}K_"
+        f"u00590_128grid_7200s_{stamp}"
+    )
+
+    case_dir = run_parent / label
+    out_dir = out_parent / label
+
+    if case_dir.exists() or out_dir.exists():
+        raise SystemExit(f"Destination exists: {label}")
+
+    case_dir.mkdir()
+
+    for p in sorted(input_files):
+        shutil.copy2(p, case_dir / p.name)
+
+    temperatures = [T0]*ntri
+    for i in dw:
+        temperatures[i] = wall_temperature
+
+    (case_dir / "Tfacinit.inp.101").write_text(
+        "# Prescribed initial facet temperatures [K]\n"
+        + "".join(f"{t:.10f}\n" for t in temperatures)
+    )
+
+    saved = [
+        float(row[0])
+        for row in rows(case_dir / "Tfacinit.inp.101")
+    ]
+
+    if len(saved) != ntri:
+        raise SystemExit("Saved temperature count is incorrect.")
+
+    heated_ids = {i for i, t in enumerate(saved) if t != T0}
+    if heated_ids != set(dw):
+        raise SystemExit("Heated-facet verification failed.")
+
+    if any(abs(saved[i]-wall_temperature) > 1e-8 for i in dw):
+        raise SystemExit("Saved wall-temperature verification failed.")
+
+    (case_dir / "heated_facet_ids.txt").write_text(
+        "\n".join(str(i+1) for i in dw) + "\n"
+    )
+
+    with (case_dir / "heating_manifest.csv").open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "experimental_label_K", "target_Fr",
+            "reference_ustar_m_s", "LES_deltaT_K",
+            "wall_temperature_K", "heated_facet_count",
+        ])
+        writer.writerow([
+            exp_label, target_fr, ustar,
+            delta_t, wall_temperature, len(dw),
+        ])
+
+    job = f"""#!/bin/bash
+#SBATCH --job-name=DW{exp_label}_7200
+#SBATCH --partition=cpu_sapphire
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=32G
+#SBATCH --time=24:00:00
+#SBATCH --output={case_dir}/udales101_%j.out
+#SBATCH --error={case_dir}/udales101_%j.err
+
+set -eo pipefail
+
+module load spack/v0.23
+module load gcc/12.4.0
+module load openmpi/5.0.7_gcc12
+module load cmake/3.26
+module load fftw/3.3.10
+spack load netcdf-fortran@4.6.1
+
+export OMP_NUM_THREADS=1
+export HWLOC_LIBXML=0
+
+INPUTDIR="{case_dir}"
+OUTDIR="{out_dir}"
+DA_BUILD="{executable}"
+
+test -x "$DA_BUILD"
+mkdir "$OUTDIR"
+cp -r "$INPUTDIR"/. "$OUTDIR"/
+cd "$OUTDIR"
+
+echo "Start time: $(date)"
+echo "Host: $(hostname)"
+echo "Working directory: $PWD"
+echo "Experimental DW label: {exp_label} K"
+echo "Target internal Froude number: {target_fr}"
+echo "Reference friction velocity: {ustar} m/s"
+echo "Actual LES temperature difference: {delta_t:.10f} K"
+echo "Heated DW temperature: {wall_temperature:.10f} K"
+echo "Heated facets: 193-224, one-based"
+echo "Cold start; grid 128 x 128 x 128; runtime 7200 s"
+
+mpirun --bind-to none --map-by slot -np 4 \\
+    "$DA_BUILD" namoptions.101
+
+echo "uDALES finished: $(date)"
+"""
+
+    job_path = case_dir / "run_101.slurm"
+    job_path.write_text(job)
+
+    subprocess.run(["bash", "-n", str(job_path)], check=True)
+
+    prepared.append((exp_label, case_dir, out_dir, job_path))
+
+    print(f"\nPrepared DW experimental label: {exp_label} K")
+    print(f"Actual LES deltaT: {delta_t:.10f} K")
+    print(f"DW temperature: {wall_temperature:.10f} K")
+    print(f"Input: {case_dir}")
+
+# ===== Submit and save job IDs =====
+record_path = run_parent / f"DW_u00590_submission_{stamp}.txt"
+
+with record_path.open("w") as record:
+    for exp_label, case_dir, out_dir, job_path in prepared:
+        result = subprocess.run(
+            ["sbatch", "--parsable", str(job_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        job_id = result.stdout.strip()
+
+        message = (
+            f"DW experimental label: {exp_label} K\n"
+            f"Job ID: {job_id}\n"
+            f"Input: {case_dir}\n"
+            f"Output: {out_dir}\n\n"
+        )
+
+        record.write(message)
+        record.flush()
+
+        print("\n===== SUBMITTED =====")
+        print(message)
+
+print(f"Submission record: {record_path}")
+PY
+
+printf '\n===== Current job queue =====\n'
+squeue -u "$(id -un)"
+BASH
