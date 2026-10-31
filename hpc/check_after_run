@@ -1,0 +1,80 @@
+bash <<'BASH'
+set -uo pipefail
+shopt -s nullglob
+
+RUN_ROOT="/mnt/beegfs/jili/u-dales-run"
+OUT_ROOT="/mnt/beegfs/jili/output"
+
+printf '\n===== Current jobs =====\n'
+squeue -u "$(id -un)" || true
+
+printf '\n===== DW submission records =====\n'
+for record in "$RUN_ROOT"/DW_u00590_submission_*.txt; do
+    printf '\n--- %s ---\n' "$record"
+    cat "$record"
+done
+
+for temperature in 70 170 240; do
+    cases=(
+        "$RUN_ROOT"/101_HW1_DW_exp"${temperature}"K_u00590_128grid_7200s_*
+    )
+
+    if [ "${#cases[@]}" -eq 0 ]; then
+        printf '\nNo revised DW %s K input directory found.\n' "$temperature"
+        continue
+    fi
+
+    for case_dir in "${cases[@]}"; do
+        label="$(basename "$case_dir")"
+        out_dir="$OUT_ROOT/$label"
+
+        printf '\n========================================\n'
+        printf 'CASE: %s\n' "$label"
+        printf 'OUTPUT: %s\n' "$out_dir"
+
+        printf '\n--- Heating settings ---\n'
+        if [ -f "$case_dir/heating_manifest.csv" ]; then
+            cat "$case_dir/heating_manifest.csv"
+        fi
+
+        printf '\n--- Simulation log endings ---\n'
+        for log in "$case_dir"/udales101_*.out; do
+            printf '\n%s\n' "$log"
+            tail -n 22 "$log"
+        done
+
+        printf '\n--- Error log endings ---\n'
+        for log in "$case_dir"/udales101_*.err; do
+            printf '\n%s\n' "$log"
+            if [ -s "$log" ]; then
+                tail -n 25 "$log"
+            else
+                printf 'Empty error log.\n'
+            fi
+        done
+
+        printf '\n--- Statistical output ---\n'
+        if [ -s "$out_dir/xytdump.101.nc" ]; then
+            ls -lh "$out_dir/xytdump.101.nc"
+        else
+            printf 'xytdump missing or empty.\n'
+        fi
+
+        printf '\n--- Merged tdump ---\n'
+        if [ -s "$out_dir/tdump.101.nc" ]; then
+            ls -lh "$out_dir/tdump.101.nc"
+            printf 'Merged file exists; completeness still needs checking.\n'
+        else
+            printf 'No non-empty merged tdump found.\n'
+        fi
+
+        printf '\n--- Raw tdump blocks ---\n'
+        blocks=("$out_dir"/tdump.*.*.101.nc)
+        printf 'Block count: %s\n' "${#blocks[@]}"
+
+        if [ "${#blocks[@]}" -gt 0 ]; then
+            ls -lh "${blocks[@]}"
+        fi
+    done
+done
+BASH
