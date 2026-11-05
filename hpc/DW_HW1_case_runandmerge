@@ -1,0 +1,219 @@
+"""Find heated DW facets, prepare three LES cases, and optionally submit them."""
+from pathlib import Path
+from datetime import datetime
+import argparse
+import csv
+import hashlib
+import re
+import shutil
+import struct
+import subprocess
+import uuid
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--submit', action='store_true')
+args = parser.parse_args()
+root = Path('/mnt/beegfs/jili')
+runroot, outroot = root/'u-dales-run', root/'output'
+exe = Path('/home/jili/u-dales/build/release/u-dales')
+tools = Path('/home/jili/u-dales/tools')
+logdir = Path.home() / 'DW_u01600_logs'
+stamp = datetime.now().strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:6]
+cases = [(70, .62), (170, .40), (240, .34)]
+
+def require(ok, message):
+    if not ok:
+        raise RuntimeError(message)
+
+
+def find_dw_facets(stl_path):
+    """Return the one-based IDs of the canyon-facing wall at x = 40 m."""
+    geometry = stl_path.read_bytes()
+    require(len(geometry) >= 84, f'Incomplete binary STL: {stl_path}')
+    ntri, = struct.unpack_from('<I', geometry, 80)
+    require(ntri == 320 and len(geometry) == 84 + 50*ntri,
+            f'Unexpected HW1 STL layout: {stl_path}')
+
+    facets = []
+    area = 0.0
+    for index in range(ntri):
+        record = struct.unpack_from('<12fH', geometry, 84 + 50*index)
+        vertices = (record[3:6], record[6:9], record[9:12])
+        on_wall = all(abs(x - 40) < 1e-6 and -1e-6 <= z <= 16 + 1e-6
+                      for x, y, z in vertices)
+        faces_canyon = all(abs(actual - expected) < 2e-4
+                           for actual, expected in zip(record[:3], (-1, 0, 0)))
+        if not (on_wall and faces_canyon):
+            continue
+
+        facets.append(index + 1)
+        a, b, c = vertices
+        ab = [b[i] - a[i] for i in range(3)]
+        ac = [c[i] - a[i] for i in range(3)]
+        cross = (ab[1]*ac[2] - ab[2]*ac[1],
+                 ab[2]*ac[0] - ab[0]*ac[2],
+                 ab[0]*ac[1] - ab[1]*ac[0])
+        area += 0.5 * sum(component**2 for component in cross)**0.5
+
+    require(len(facets) == 32 and abs(area - 1024) < 1e-4,
+            f'Unexpected DW selection: {len(facets)} facets, {area:g} m^2 ({stl_path})')
+    return ntri, facets
+
+
+require(exe.is_file(), f'Missing executable: {exe}')
+toolnames = ['gather_outputs.sh', 'nco_concatenate_field_x.sh',
+             'nco_concatenate_field_y.sh']
+for name in toolnames:
+    require((tools/name).is_file(), f'Missing merge tool: {tools/name}')
+sources = []
+for label, fr in cases:
+    src = runroot/f'101_HW1_DW_exp{label}K_u00590_128grid_7200s_20261030_135904'
+    names = ['namoptions.101', 'geom.101.STL', 'facets.inp.101',
+             'facetarea.inp.101', 'factypes.inp.101', 'Tfacinit.inp.101',
+             'prof.inp.101', 'scalar.inp.101', 'lscale.inp.101',
+             'scalarsourcel.inp.1.101']
+    names += [f'{p}_{a}.txt' for a in ('u','v','w','c')
+              for p in ('solid','fluid_boundary','facet_sections')]
+    for name in names:
+        require((src/name).is_file() and (src/name).stat().st_size > 0,
+                f'Missing input: {src/name}')
+    nam = (src/'namoptions.101').read_text()
+    active = '\n'.join(s.split('!',1)[0] for s in nam.splitlines())
+    def value(key):
+        found = re.findall(rf'(?im)^\s*{key}\s*=\s*([^,\n]+)', active)
+        require(len(found)==1, f'Missing/duplicate {key}: {src}')
+        return found[0].strip().lower()
+    for key, number in dict(itot=128,jtot=128,ktot=128,xlen=64,ylen=64,
+                            zsize=64,runtime=7200,uflowrate=1.5,nprocx=2,
+                            nprocy=2,iwalltemp=2,thl0=295,facT=295,
+                            tstatsdump=100,tsample=1).items():
+        require(float(value(key).replace('d','e'))==number,
+                f'Unexpected {key}: {src}')
+    for key in ('lwarmstart','lstratstart'):
+        require(value(key)=='.false.', f'Expected cold start: {src}')
+    for key in ('luvolflowr','lbuoyancy','ltempeq','ltdump','lxytdump'):
+        require(value(key)=='.true.', f'Disabled {key}: {src}')
+    leb = re.findall(r'(?im)^\s*lEB\s*=\s*([^,\n]+)',active)
+    require(all(v.strip().lower()=='.false.' for v in leb), 'lEB must be false')
+    ntri, heated_facets = find_dw_facets(src / 'geom.101.STL')
+    print(f'DW {label}: heated facet IDs = {heated_facets}', flush=True)
+    sources.append((label, fr, src, ntri, heated_facets))
+
+# NCO and NetCDF command availability is checked again on the compute node.
+merge = r'''#!/bin/bash
+set -eo pipefail
+OUT="$1"
+test ! -e "$OUT/tdump.101.nc"
+WORK=$(mktemp -d "$OUT/.merge_tdump_XXXXXX")
+mkdir "$WORK/101"
+for x in 000 001; do
+  for y in 000 001; do
+    f="tdump.$x.$y.101.nc"
+    test -s "$OUT/$f"
+    ln -s "$OUT/$f" "$WORK/101/$f"
+  done
+done
+bash "$(dirname "$0")/merge_tools/gather_outputs.sh" "$WORK/101" > "$OUT/merge_tdump.log" 2>&1
+test -s "$WORK/101/tdump.101.nc"
+ncdump -h "$WORK/101/tdump.101.nc" > "$WORK/header.txt"
+for dim in xt yt zt; do
+  grep -Eq "[[:space:]]$dim = 128[[:space:]]*;" "$WORK/header.txt"
+done
+ncdump -v time "$WORK/101/tdump.101.nc" > "$OUT/tdump_time_check.txt"
+mv "$WORK/101/tdump.101.nc" "$OUT/tdump.101.nc"
+date -Is > "$OUT/MERGE_COMPLETE"
+echo "MERGE_COMPLETE: $OUT/tdump.101.nc"
+'''
+
+prepared = []
+logdir.mkdir(exist_ok=True)
+for label, fr, src, ntri, heated_facets in sources:
+    delta = 295*.16**2/(9.81*16*fr**2)
+    name = f'101_HW1_DW_exp{label}K_u01600_128grid_7200s_{stamp}'
+    case, out = runroot/name, outroot/name
+    require(not case.exists() and not out.exists(), 'Destination exists')
+    case.mkdir()
+    patterns = ['*.inp.101','*.inp.*.101','solid_*.txt',
+                'fluid_boundary_*.txt','facet_sections_*.txt',
+                'geom.101.STL','namoptions.101']
+    for p in sorted({p for pat in patterns for p in src.glob(pat)}):
+        if p.is_file():
+            shutil.copy2(p,case/p.name)
+    temps = [295.0] * ntri
+    for facet in heated_facets:
+        temps[facet - 1] += delta
+    (case/'Tfacinit.inp.101').write_text('# Prescribed facet temperatures [K]\n'+
+                                        ''.join(f'{t:.10f}\n' for t in temps))
+    (case/'heated_facet_ids.txt').write_text(''.join(f'{i}\n' for i in heated_facets))
+    with (case/'heating_manifest.csv').open('w',newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['DW_label_K','target_Fr','reference_ustar_m_s','deltaT_K','wallT_K'])
+        w.writerow([label,fr,.16,delta,295+delta])
+    (case/'provenance.txt').write_text(f'Source: {src}\nExecutable: {exe}\n'+
+        f'Executable SHA256: {hashlib.sha256(exe.read_bytes()).hexdigest()}\n'+
+        'u*=0.16 m/s is a reference for thermal scaling, not imposed wall shear.\n')
+    mt = case/'merge_tools'
+    mt.mkdir()
+    for tool in toolnames:
+        dst = mt/tool
+        shutil.copy2(tools/tool,dst)
+        dst.chmod(0o755)
+    (case/'merge_tdump.sh').write_text(merge)
+    job = f'''#!/bin/bash
+#SBATCH --job-name=DW{label}_u016
+#SBATCH --partition=cpu_sapphire
+#SBATCH --nodes=1
+#SBATCH --ntasks=4
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=32G
+#SBATCH --time=24:00:00
+#SBATCH --exclude=compute-7-1
+#SBATCH --chdir={Path.home()}
+#SBATCH --output={logdir}/DW{label}_{stamp}_%j.out
+#SBATCH --error={logdir}/DW{label}_{stamp}_%j.err
+set -eo pipefail
+hostname
+test -r "{case}/namoptions.101"
+test -w "{outroot}"
+echo SHARED_STORAGE_CHECK_PASSED
+module load spack/v0.23
+module load gcc/12.4.0
+module load openmpi/5.0.7_gcc12
+module load cmake/3.26
+module load fftw/3.3.10
+spack load netcdf-fortran@4.6.1
+export OMP_NUM_THREADS=1
+export HWLOC_LIBXML=0
+test -x "{exe}"
+mkdir "{out}"
+cp -r "{case}/." "{out}/"
+cd "{out}"
+echo "DW {label} K: deltaT={delta:.10f} K, wallT={295+delta:.10f} K"
+mpirun --bind-to none --map-by slot -np 4 "{exe}" namoptions.101
+date -Is > RUN_COMPLETE
+echo "SIMULATION COMPLETE"
+if ! command -v ncrcat >/dev/null; then spack load nco; fi
+for tool in ncrcat ncpdq ncks ncdump; do command -v "$tool"; done
+bash ./merge_tdump.sh "$PWD"
+echo "RUN_AND_MERGE_COMPLETE"
+'''
+    jobfile = case/'run_101.slurm'
+    jobfile.write_text(job)
+    subprocess.run(['bash','-n',str(jobfile)],check=True)
+    subprocess.run(['bash','-n',str(case/'merge_tdump.sh')],check=True)
+    prepared.append((label,case,out,jobfile))
+    print(f'PREPARED DW {label}: deltaT={delta:.10f} K\n{case}',flush=True)
+
+record = runroot/f'DW_u01600_submission_{stamp}.txt'
+with record.open('x') as f:
+    for label,case,out,jobfile in prepared:
+        if args.submit:
+            result = subprocess.run(['sbatch','--parsable',str(jobfile)],
+                                    check=True,capture_output=True,text=True)
+            message = f'DW {label}: Job {result.stdout.strip()}\nInput: {case}\nOutput: {out}\n'
+        else:
+            message = f'PREPARED ONLY: sbatch {jobfile}\nOutput: {out}\n'
+        f.write(message+'\n')
+        f.flush()
+        print(message,flush=True)
+print(f'Record: {record}')
