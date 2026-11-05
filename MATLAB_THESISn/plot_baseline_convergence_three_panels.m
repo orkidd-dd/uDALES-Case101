@@ -10,6 +10,12 @@ startTime = 1000;
 ends = [3200 4200 5200 6200 7200];
 colors = [0 .447 .741; .85 .325 .098; .929 .694 .125; .494 .184 .556; .466 .674 .188];
 styles = {'-', '--', '-.', ':', '-'};
+% Font sizes on the wide MATLAB canvas. At a 16 cm Word figure width,
+% these render at approximately 9 pt (ticks/legend) and 10 pt (labels).
+tickFontSize = 20;
+labelFontSize = 22;
+titleFontSize = 22;
+legendFontSize = 19;
 allMetrics = table();
 
 for ic = 1:numel(caseDirs)
@@ -63,24 +69,36 @@ for ic = 1:numel(caseDirs)
  end
  
  for ax = [ax1 ax2 ax3]
-  yline(ax, 1, '--', 'Color', [.35 .35 .35], 'HandleVisibility', 'off');
-  ylim(ax, [0 4]); yticks(ax, 0:.5:4); grid(ax, 'on'); box(ax, 'on');
-  set(ax, 'FontName', 'Times New Roman', 'FontSize', 12, 'LineWidth', 1, 'GridAlpha', .15);
-  ylabel(ax, '$z/H$', 'Interpreter', 'latex', 'FontSize', 15);
+     yline(ax, 1, '--', 'Color', [.35 .35 .35], ...
+         'HandleVisibility', 'off');
+     ylim(ax, [0 4]);
+     yticks(ax, 0:0.5:4);
+     grid(ax, 'on');
+     box(ax, 'on');
+
+     set(ax, 'FontName', 'Times New Roman', ...
+         'FontSize', tickFontSize, 'LineWidth', 1, 'GridAlpha', .15);
+     ylabel(ax, '$z/H$', 'Interpreter', 'latex', ...
+         'FontSize', labelFontSize);
  end
- 
- title(ax1, '(a) Mean velocity', 'FontName', 'Times New Roman', 'FontSize', 16, 'FontWeight', 'normal');
- title(ax2, '(b) Resolved three-component TKE', 'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'normal');
- 
- % Simplified X-axis labels (removed xy subscripts)
- xlabel(ax1, '$U\ (\mathrm{m/s})$', 'Interpreter', 'latex', 'FontSize', 14);
- xlabel(ax2, '$\mathrm{TKE}\ (\mathrm{m^2/s^2})$', 'Interpreter', 'latex', 'FontSize', 14);
- 
- title(ax3, '(c) Reynolds shear stress', 'FontName', 'Times New Roman', 'FontSize', 14, 'FontWeight', 'normal');
- xlabel(ax3, '$-\overline{u^{\prime}w^{\prime}}\ (\mathrm{m^2/s^2})$', 'Interpreter', 'latex', 'FontSize', 14);
- 
- % Place legend inside the first subplot (ax1)
- legend(ax1, handles, labels, 'Location', 'best', 'Box', 'off', 'FontName', 'Times New Roman', 'FontSize', 10);
+
+ title(ax1, '(a) Mean velocity', ...
+     'FontSize', titleFontSize, 'FontWeight', 'normal');
+ title(ax2, '(b) Resolved 3C TKE', ...
+     'FontSize', titleFontSize, 'FontWeight', 'normal');
+ title(ax3, '(c) Reynolds shear stress', ...
+     'FontSize', titleFontSize, 'FontWeight', 'normal');
+
+ xlabel(ax1, '$U\ (\mathrm{m/s})$', ...
+     'Interpreter', 'latex', 'FontSize', labelFontSize);
+ xlabel(ax2, '$\mathrm{TKE}\ (\mathrm{m^2/s^2})$', ...
+     'Interpreter', 'latex', 'FontSize', labelFontSize);
+ xlabel(ax3, '$-\overline{u^{\prime}w^{\prime}}\ (\mathrm{m^2/s^2})$', ...
+     'Interpreter', 'latex', 'FontSize', labelFontSize);
+
+ legend(ax1, handles, labels, 'Location', 'northwest', ...
+     'Box', 'off', 'FontName', 'Times New Roman', ...
+     'FontSize', legendFontSize);
  
  drawnow;
  assert(abs(ax1.Position(3) - ax2.Position(3)) < 1e-10);
@@ -89,9 +107,9 @@ for ic = 1:numel(caseDirs)
  assert(abs(diff(diff(rectangles(:, 1)))) < 1e-10);
  
  stem = fullfile(outDir, [names{ic} '_velocity_TKE_stress_convergence']);
- exportgraphics(fig, [stem '.png'], 'Resolution', 300);
- exportgraphics(fig, [stem '.pdf'], 'ContentType', 'vector');
- savefig(fig, [stem '.fig']);
+ exportgraphics(fig, [stem '_word.png'], 'Resolution', 300);
+ exportgraphics(fig, [stem '_word.pdf'], 'ContentType', 'vector');
+ savefig(fig, [stem '_word.fig']);
  writetable(sourceData, [stem '_profiles.csv']);
  writetable(ledger, [stem '_windows.csv']);
  save([stem '_data.mat'], 'profilesU', 'profilesK', 'profilesR', 'z', 'zm', 'time', 'ends', 'H', 'file');
@@ -127,4 +145,5 @@ function p = weightedMean(A, w)
 use = w > 0; A = A(:, use); w = w(use).'; valid = isfinite(A); A(~valid) = 0;
 p = sum(A .* w, 2) ./ sum(double(valid) .* w, 2);
 end
+
 
