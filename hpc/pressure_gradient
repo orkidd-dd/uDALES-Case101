@@ -1,0 +1,37 @@
+
+python3 - <<'PY'
+from pathlib import Path
+from math import sqrt
+
+work = Path("/mnt/beegfs/jili/force_diagnostic_0K_20261102_143143_868341")
+log = work / "statistics_1200s" / "flowrate_force_stages.txt"
+
+t_start, t_end = 8100.0, 8400.0  # simulation time s
+rho = 1.2                       # kg/m^3
+h_fluid = 56.0                   # Vf / (Lx * Ly)，unit m
+
+samples = {1: [], 2: [], 3: []}
+
+with log.open() as f:
+    for line in f:
+        if not line.strip():
+            continue
+        t, dt, stage, udef, accel = map(float, line.split())
+        if t_start <= t < t_end:
+            samples[int(stage)].append((t, dt, accel))
+
+for stage, rows in samples.items():
+    if not rows:
+        raise SystemExit(f"RK {stage}: no samples in {t_start:g}–{t_end:g} s")
+
+    duration = sum(dt for _, dt, _ in rows)
+    a_mean = sum(accel * dt for _, dt, accel in rows) / duration
+    dpdx = -rho * a_mean
+    ustar = sqrt(a_mean * h_fluid)
+
+    print(f"RK {stage}: {len(rows)} samples, sum(dt) = {duration:.3f} s")
+    print(f"  mean acceleration  = {a_mean:.9e} m/s^2")
+    print(f"  (1/rho) * dP/dx    = {-a_mean:.9e} m/s^2")
+    print(f"  dP/dx              = {dpdx:.9e} Pa/m")
+    print(f"  u*                 = {ustar:.6f} m/s")
+PY
