@@ -1,0 +1,104 @@
+cd /mnt/beegfs/jili/u-dales-run/101_HW15
+
+python3 - <<'PY'
+import math
+import struct
+from pathlib import Path
+
+path = Path("geom.101.STL")
+backup = Path("geom.101.before_HW15.STL")
+
+# Check the input and prevent repeated modification. if file no exit then stop
+if not path.is_file():
+    raise SystemExit(f"Input file not found: {path}")
+
+if backup.exists():
+    raise SystemExit(
+        f"Backup already exists: {backup}. "
+        "Stopped to prevent repeated modification."
+    )
+# read file and save on data
+original = path.read_bytes()
+
+if len(original) < 84:
+    raise SystemExit("Invalid binary STL: file is too short.")
+# https://www.loc.gov/preservation/digital/formats/fdd/fdd000505.shtml 
+data = bytearray(original)
+# get the number of triangle
+ntri = struct.unpack_from("<I", data, 80)[0]
+
+if ntri == 0 or len(data) != 84 + 50 * ntri:
+    raise SystemExit("Unexpected binary STL format. No files modified.")
+
+# Verify the original vertical facade locations.
+wall_x = set()
+
+for i in range(ntri):
+    record = struct.unpack_from("<12fH", data, 84 + 50 * i)
+    points = (record[3:6], record[6:9], record[9:12])
+
+    if not all(math.isfinite(v) for point in points for v in point):
+        raise SystemExit("Non-finite vertex coordinates. No files modified.")
+
+    xs = [point[0] for point in points]
+    zs = [point[2] for point in points]
+# make sure the x is same
+    if max(xs) - min(xs) < 1e-5 and max(zs) - min(zs) > 1e-5:
+        wall_x.add(round(xs[0], 4))
+
+expected_walls = {8.0, 24.0, 40.0, 56.0}
+
+if wall_x != expected_walls:
+    raise SystemExit(
+        f"Unexpected original facade locations: {sorted(wall_x)}. "
+        "Expected [8, 24, 40, 56] m. No files modified."
+    )
+
+# Map the original x intervals to the new geometry.
+# Building widths and heights remain unchanged.
+# Ground surfaces are adjusted with the buildings.
+old_x = [0.0, 8.0, 24.0, 40.0, 56.0, 64.0]
+new_x = [0.0, 32/3, 80/3, 112/3, 160/3, 64.0]
+
+def map_x(x):
+    if not 0.0 <= x <= 64.0:
+        raise ValueError(f"Vertex outside the expected x domain: {x}")
+
+    for j in range(len(old_x) - 1):
+        if x <= old_x[j + 1]:
+            fraction = (x - old_x[j]) / (old_x[j + 1] - old_x[j])
+            return new_x[j] + fraction * (new_x[j + 1] - new_x[j])
+
+    raise ValueError(f"Unable to map x coordinate: {x}")
+
+# Update the x coordinate of each triangle vertex.
+# Preserve y, z, triangle ordering and stored normals.
+# This mapping is intended for this axis-aligned case geometry.
+for i in range(ntri):
+    start = 84 + 50 * i
+
+    for offset in (12, 24, 36):
+        position = start + offset
+        x = struct.unpack_from("<f", data, position)[0]
+        struct.pack_into("<f", data, position, map_x(x))
+
+# Save the original geometry before writing the modified file.
+with backup.open("xb") as handle:
+    handle.write(original)
+
+path.write_bytes(data)
+
+print(f"Original geometry backed up to: {backup}")
+print(f"Modified geometry saved to: {path}")
+print(f"Triangle count: {ntri}")
+print("Upstream building:   x = 10.666667 to 26.666667 m")
+print("Central canyon:      x = 26.666667 to 37.333333 m")
+print("Downstream building: x = 37.333333 to 53.333333 m")
+print("Building width: 16 m")
+print("Building height: 16 m")
+print("Central canyon width: 10.666667 m")
+print("Central canyon H/W: 1.5")
+print("Domain size unchanged: 64 x 64 x 64 m")
+print("Periodic-boundary canyon width: 21.333333 m")
+print("Next step: regenerate IBM inputs before running uDALES.")
+PY
