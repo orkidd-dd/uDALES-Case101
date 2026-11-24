@@ -1,1 +1,4 @@
-https://udales.github.io/u-dales/udales-docs-software/sourcefile/modibm.f90.html
+https://udales.github.io/u-dales/udales-docs-software/sourcefile/modibm.f90.html   # heatflux
+=================================================================================
+https://github.com/uDALES/u-dales/blob/master/src/initfac.f90       #walltemperature
+https://udales.github.io/u-dales/udales-docs-software/sourcefile/initfac.f90.html
